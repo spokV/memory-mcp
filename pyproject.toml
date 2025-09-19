@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-mcp"
+version = "0.1.0"
+description = "MCP-compatible memory server backed by SQLite"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+memory-mcp-server = "memory_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memory_mcp*"]
