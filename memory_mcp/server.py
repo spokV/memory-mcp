@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .storage import add_memory, connect, delete_memory, get_memory, list_memories
+from .storage import (
+    add_memory,
+    add_memories,
+    connect,
+    delete_memory,
+    delete_memories,
+    get_memory,
+    list_memories,
+)
 
 
 def _read_int_env(var_name: str, fallback: int) -> int:
@@ -59,8 +67,18 @@ def _delete_memory(conn, memory_id: int):
 
 
 @_with_connection
-def _list_memories(conn, query: Optional[str]):
-    return list_memories(conn, query)
+def _list_memories(conn, query: Optional[str], metadata_filters: Optional[Dict[str, Any]]):
+    return list_memories(conn, query, metadata_filters)
+
+
+@_with_connection
+def _create_memories(conn, entries: List[Dict[str, Any]]):
+    return add_memories(conn, entries)
+
+
+@_with_connection
+def _delete_memories(conn, ids: List[int]):
+    return delete_memories(conn, ids)
 
 
 @mcp.tool()
@@ -70,15 +88,41 @@ async def memory_create(
     tags: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     """Create a new memory entry."""
-    record = _create_memory(content=content.strip(), metadata=metadata, tags=tags or [])
+    try:
+        record = _create_memory(content=content.strip(), metadata=metadata, tags=tags or [])
+    except ValueError as exc:
+        return {"error": "invalid_metadata", "message": str(exc)}
     return {"memory": record}
 
 
 @mcp.tool()
-async def memory_list(query: Optional[str] = None) -> Dict[str, Any]:
-    """List memories, optionally filtering by substring query."""
-    items = _list_memories(query)
+async def memory_list(
+    query: Optional[str] = None,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """List memories, optionally filtering by substring query or metadata."""
+    try:
+        items = _list_memories(query, metadata_filters)
+    except ValueError as exc:
+        return {"error": "invalid_filters", "message": str(exc)}
     return {"count": len(items), "memories": items}
+
+
+@mcp.tool()
+async def memory_create_batch(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Create multiple memories in one call."""
+    try:
+        records = _create_memories(entries)
+    except ValueError as exc:
+        return {"error": "invalid_batch", "message": str(exc)}
+    return {"count": len(records), "memories": records}
+
+
+@mcp.tool()
+async def memory_delete_batch(ids: List[int]) -> Dict[str, Any]:
+    """Delete multiple memories by id."""
+    deleted = _delete_memories(ids)
+    return {"deleted": deleted}
 
 
 @mcp.tool()
