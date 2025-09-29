@@ -11,13 +11,18 @@ from mcp.server.fastmcp import FastMCP
 from .storage import (
     add_memory,
     add_memories,
+    collect_all_tags,
     connect,
     delete_memory,
     delete_memories,
+    find_invalid_tag_entries,
+    get_crossrefs,
     get_memory,
     list_memories,
-    collect_all_tags,
-    find_invalid_tag_entries,
+    rebuild_embeddings,
+    rebuild_crossrefs,
+    semantic_search,
+    update_crossrefs,
 )
 
 
@@ -94,6 +99,44 @@ def _find_invalid_tags(conn):
     from . import TAG_WHITELIST
 
     return find_invalid_tag_entries(conn, TAG_WHITELIST)
+
+
+@_with_connection
+def _get_related(conn, memory_id: int, refresh: bool) -> List[Dict[str, Any]]:
+    if refresh:
+        update_crossrefs(conn, memory_id)
+    refs = get_crossrefs(conn, memory_id)
+    if not refs and not refresh:
+        update_crossrefs(conn, memory_id)
+        refs = get_crossrefs(conn, memory_id)
+    return refs
+
+
+@_with_connection
+def _rebuild_crossrefs(conn):
+    return rebuild_crossrefs(conn)
+
+
+@_with_connection
+def _semantic_search(
+    conn,
+    query: str,
+    metadata_filters: Optional[Dict[str, Any]],
+    top_k: Optional[int],
+    min_score: Optional[float],
+):
+    return semantic_search(
+        conn,
+        query,
+        metadata_filters=metadata_filters,
+        top_k=top_k,
+        min_score=min_score,
+    )
+
+
+@_with_connection
+def _rebuild_embeddings(conn):
+    return rebuild_embeddings(conn)
 
 
 def _build_tag_hierarchy(tags):
@@ -293,6 +336,51 @@ async def memory_hierarchy(
 
     hierarchy = _build_hierarchy_tree(items, include_root=include_root)
     return {"count": len(items), "hierarchy": hierarchy}
+
+
+@mcp.tool()
+async def memory_semantic_search(
+    query: str,
+    top_k: int = 5,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    min_score: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Perform a semantic search using vector embeddings."""
+
+    try:
+        results = _semantic_search(
+            query,
+            metadata_filters,
+            top_k,
+            min_score,
+        )
+    except ValueError as exc:
+        return {"error": "invalid_filters", "message": str(exc)}
+    return {"count": len(results), "results": results}
+
+
+@mcp.tool()
+async def memory_rebuild_embeddings() -> Dict[str, Any]:
+    """Recompute embeddings for all memories."""
+
+    updated = _rebuild_embeddings()
+    return {"updated": updated}
+
+
+@mcp.tool()
+async def memory_related(memory_id: int, refresh: bool = False) -> Dict[str, Any]:
+    """Return cross-referenced memories for a given entry."""
+
+    related = _get_related(memory_id, refresh)
+    return {"id": memory_id, "related": related}
+
+
+@mcp.tool()
+async def memory_rebuild_crossrefs() -> Dict[str, Any]:
+    """Recompute cross-reference links for all memories."""
+
+    updated = _rebuild_crossrefs()
+    return {"updated": updated}
 
 
 def main(argv: Optional[list[str]] = None) -> None:

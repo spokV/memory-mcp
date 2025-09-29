@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence as TypingSequence
@@ -32,6 +35,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
     _ensure_fts(conn)
+    _ensure_embeddings_table(conn)
+    _ensure_crossrefs_table(conn)
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
@@ -46,6 +51,32 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             """
         )
         conn.commit()
+
+
+def _ensure_embeddings_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories_embeddings (
+            memory_id INTEGER PRIMARY KEY,
+            embedding TEXT,
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.commit()
+
+
+def _ensure_crossrefs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories_crossrefs (
+            memory_id INTEGER PRIMARY KEY,
+            related TEXT,
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.commit()
 
 
 def _build_metadata_dict(metadata: Mapping[str, Any]) -> Dict[str, Any]:
@@ -339,6 +370,260 @@ def _enforce_tag_whitelist(tags: List[str]) -> None:
         raise ValueError(f"Tag '{tag}' is not in the allowed tag list")
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _compute_embedding(
+    content: str,
+    metadata: Optional[Dict[str, Any]],
+    tags: List[str],
+) -> Dict[str, float]:
+    parts: List[str] = [content]
+
+    if metadata:
+        try:
+            metadata_str = json.dumps(metadata, ensure_ascii=False)
+        except (TypeError, ValueError):
+            metadata_str = str(metadata)
+        parts.append(metadata_str)
+
+    if tags:
+        parts.append(" ".join(tags))
+
+    joined = " \n ".join(parts).lower()
+    tokens = _TOKEN_RE.findall(joined)
+    if not tokens:
+        return {}
+
+    counts = Counter(tokens)
+    total = sum(counts.values())
+    if not total:
+        return {}
+
+    return {token: count / total for token, count in counts.items()}
+
+
+def _embedding_to_json(vector: Dict[str, float]) -> Optional[str]:
+    if not vector:
+        return None
+    items = sorted(vector.items())
+    return json.dumps(items, ensure_ascii=False)
+
+
+def _json_to_embedding(data: Optional[str]) -> Dict[str, float]:
+    if not data:
+        return {}
+    try:
+        items = json.loads(data)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(items, list):
+        return {str(token): float(weight) for token, weight in items}
+    return {}
+
+
+def _embedding_norm(vector: Dict[str, float]) -> float:
+    return math.sqrt(sum(weight * weight for weight in vector.values()))
+
+
+def _cosine_similarity(vec_a: Dict[str, float], vec_b: Dict[str, float]) -> float:
+    if not vec_a or not vec_b:
+        return 0.0
+    dot = 0.0
+    for token, weight in vec_a.items():
+        dot += weight * vec_b.get(token, 0.0)
+    norm_a = _embedding_norm(vec_a)
+    norm_b = _embedding_norm(vec_b)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _upsert_embedding(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    vector: Dict[str, float],
+) -> None:
+    embedding_json = _embedding_to_json(vector)
+    conn.execute(
+        """
+        INSERT INTO memories_embeddings(memory_id, embedding)
+        VALUES(?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET embedding=excluded.embedding
+        """,
+        (memory_id, embedding_json),
+    )
+
+
+def _delete_embedding(conn: sqlite3.Connection, memory_id: int) -> None:
+    conn.execute("DELETE FROM memories_embeddings WHERE memory_id = ?", (memory_id,))
+
+
+def _get_embeddings_for_ids(
+    conn: sqlite3.Connection,
+    memory_ids: List[int],
+) -> Dict[int, Dict[str, float]]:
+    if not memory_ids:
+        return {}
+    placeholders = ",".join("?" for _ in memory_ids)
+    rows = conn.execute(
+        f"SELECT memory_id, embedding FROM memories_embeddings WHERE memory_id IN ({placeholders})",
+        memory_ids,
+    ).fetchall()
+    mapping: Dict[int, Dict[str, float]] = {}
+    for row in rows:
+        mapping[row["memory_id"]] = _json_to_embedding(row["embedding"])
+    return mapping
+
+
+def _search_by_vector(
+    conn: sqlite3.Connection,
+    vector_query: Dict[str, float],
+    *,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    top_k: Optional[int] = 5,
+    min_score: Optional[float] = None,
+    exclude_ids: Optional[Iterable[int]] = None,
+) -> List[Dict[str, Any]]:
+    exclude_set = set(exclude_ids or [])
+
+    candidates = list_memories(conn, query=None, metadata_filters=metadata_filters)
+    filtered = [record for record in candidates if record["id"] not in exclude_set]
+
+    ids = [record["id"] for record in filtered]
+    embeddings = _get_embeddings_for_ids(conn, ids)
+
+    results: List[Dict[str, Any]] = []
+    for record in filtered:
+        memory_id = record["id"]
+        vector = embeddings.get(memory_id)
+        if vector is None:
+            vector = _compute_embedding(
+                record["content"],
+                record.get("metadata"),
+                record.get("tags", []),
+            )
+            _upsert_embedding(conn, memory_id, vector)
+        score = _cosine_similarity(vector_query, vector)
+        if min_score is not None and score < min_score:
+            continue
+        results.append({"score": score, "memory": record})
+
+    results.sort(key=lambda entry: entry["score"], reverse=True)
+    if top_k is not None:
+        results = results[: top_k]
+    return results
+
+
+def _store_crossrefs(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    related: List[Dict[str, Any]],
+) -> None:
+    related_json = json.dumps(related, ensure_ascii=False) if related else None
+    conn.execute(
+        """
+        INSERT INTO memories_crossrefs(memory_id, related)
+        VALUES(?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET related=excluded.related
+        """,
+        (memory_id, related_json),
+    )
+
+
+def _clear_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
+    conn.execute("DELETE FROM memories_crossrefs WHERE memory_id = ?", (memory_id,))
+
+
+def get_crossrefs(conn: sqlite3.Connection, memory_id: int) -> List[Dict[str, Any]]:
+    row = conn.execute(
+        "SELECT related FROM memories_crossrefs WHERE memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    if not row or not row["related"]:
+        return []
+    try:
+        data = json.loads(row["related"])
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _update_crossrefs_for_memory(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    vector: Optional[Dict[str, float]] = None,
+    top_k: int = 5,
+    min_score: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    if vector is None:
+        embeddings = _get_embeddings_for_ids(conn, [memory_id])
+        vector = embeddings.get(memory_id)
+        if vector is None:
+            record = get_memory(conn, memory_id)
+            if record is None:
+                return []
+            vector = _compute_embedding(
+                record["content"],
+                record.get("metadata"),
+                record.get("tags", []),
+            )
+            _upsert_embedding(conn, memory_id, vector)
+
+    results = _search_by_vector(
+        conn,
+        vector,
+        metadata_filters=None,
+        top_k=top_k,
+        min_score=min_score,
+        exclude_ids=[memory_id],
+    )
+
+    related = [
+        {"id": item["memory"]["id"], "score": item["score"]}
+        for item in results
+    ]
+    _store_crossrefs(conn, memory_id, related)
+    return related
+
+
+def _update_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
+    related = _update_crossrefs_for_memory(conn, memory_id)
+    for item in related:
+        _update_crossrefs_for_memory(conn, item["id"])
+
+
+def rebuild_crossrefs(conn: sqlite3.Connection) -> int:
+    rows = conn.execute("SELECT id FROM memories").fetchall()
+    total = 0
+    for row in rows:
+        memory_id = row["id"]
+        _update_crossrefs_for_memory(conn, memory_id)
+        total += 1
+    conn.commit()
+    return total
+
+
+def update_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
+    _update_crossrefs(conn, memory_id)
+
+
+def _remove_memory_from_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
+    rows = conn.execute("SELECT memory_id, related FROM memories_crossrefs").fetchall()
+    for row in rows:
+        related = []
+        if row["related"]:
+            try:
+                related = json.loads(row["related"])
+            except json.JSONDecodeError:
+                related = []
+        filtered = [entry for entry in related if entry.get("id") != memory_id]
+        if len(filtered) != len(related):
+            _store_crossrefs(conn, row["memory_id"], filtered)
+
+
 def add_memory(
     conn: sqlite3.Connection,
     *,
@@ -361,6 +646,9 @@ def add_memory(
     )
     memory_id = cur.lastrowid
     _fts_upsert(conn, memory_id, content, metadata_json, tags_json)
+    vector = _compute_embedding(content, prepared_metadata, validated_tags)
+    _upsert_embedding(conn, memory_id, vector)
+    _update_crossrefs(conn, memory_id)
     conn.commit()
     return get_memory(conn, memory_id)
 
@@ -370,6 +658,7 @@ def add_memories(
     entries: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    embeddings: List[Dict[str, float]] = []
     prepared: List[tuple[str, Optional[str], Optional[str]]] = []
 
     for entry in entries:
@@ -389,6 +678,7 @@ def add_memories(
             "metadata_json": metadata_json,
             "tags_json": tags_json,
         })
+        embeddings.append(_compute_embedding(content, prepared_metadata, validated_tags))
 
     if not prepared:
         return []
@@ -402,8 +692,10 @@ def add_memories(
     start_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     inserted: List[int] = list(range(start_id - len(prepared) + 1, start_id + 1))
 
-    for memory_id, entry in zip(inserted, rows):
+    for memory_id, entry, vector in zip(inserted, rows, embeddings):
         _fts_upsert(conn, memory_id, entry["content"], entry["metadata_json"], entry["tags_json"])
+        _upsert_embedding(conn, memory_id, vector)
+        _update_crossrefs(conn, memory_id)
 
     conn.commit()
     return [get_memory(conn, memory_id) for memory_id in inserted]
@@ -414,11 +706,18 @@ def get_memory(conn: sqlite3.Connection, memory_id: int) -> Optional[Dict[str, A
         "SELECT id, content, metadata, tags, created_at FROM memories WHERE id = ?",
         (memory_id,),
     ).fetchone()
-    return _serialise_row(row) if row else None
+    if not row:
+        return None
+    record = _serialise_row(row)
+    record["related"] = get_crossrefs(conn, memory_id)
+    return record
 
 
 def delete_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     _fts_delete(conn, memory_id)
+    _delete_embedding(conn, memory_id)
+    _clear_crossrefs(conn, memory_id)
+    _remove_memory_from_crossrefs(conn, memory_id)
     cur = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
     conn.commit()
     return cur.rowcount > 0
@@ -430,6 +729,9 @@ def delete_memories(conn: sqlite3.Connection, memory_ids: Iterable[int]) -> int:
         return 0
     for memory_id in ids:
         _fts_delete(conn, memory_id)
+        _delete_embedding(conn, memory_id)
+        _clear_crossrefs(conn, memory_id)
+        _remove_memory_from_crossrefs(conn, memory_id)
     conn.execute(
         f"DELETE FROM memories WHERE id IN ({','.join('?' for _ in ids)})",
         ids,
@@ -553,3 +855,39 @@ def find_invalid_tag_entries(
         if bad:
             invalid.append({"id": memory_id, "invalid_tags": bad})
     return invalid
+
+
+def semantic_search(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    top_k: Optional[int] = 5,
+    min_score: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    vector_query = _compute_embedding(query, None, [])
+    if not vector_query:
+        return []
+    return _search_by_vector(
+        conn,
+        vector_query,
+        metadata_filters=metadata_filters,
+        top_k=top_k,
+        min_score=min_score,
+    )
+
+
+def rebuild_embeddings(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        "SELECT id, content, metadata, tags FROM memories"
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        memory_id = row["id"]
+        metadata = json.loads(row["metadata"]) if row["metadata"] else None
+        tags = json.loads(row["tags"]) if row["tags"] else []
+        vector = _compute_embedding(row["content"], metadata, tags)
+        _upsert_embedding(conn, memory_id, vector)
+        updated += 1
+    conn.commit()
+    return updated

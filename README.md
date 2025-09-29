@@ -5,6 +5,8 @@ that persists shared memories in an on-disk SQLite database. The
 `mcp_server.py` entry point exposes a **true MCP server** (via `FastMCP`)
 compatible with the Codex CLI and other MCP-aware clients.
 ## Features
+- Semantic search (vector embeddings for concept queries)
+- Cross-reference suggestions (auto-linked related memories)
 - Tag validation (allowlist enforced on create/batch create)
 - Zero external dependencies (built with the Python standard library)
 - SQLite-backed storage that survives restarts (`.mcp/memory-mcp/memory_mcp/memories.db`)
@@ -173,6 +175,16 @@ endpoint accepts the same `query` and `metadata_filters` arguments as
 Passing `include_root=true` returns a synthetic root node containing all
 children plus any memories without hierarchy metadata.
 
+
+## Semantic search
+## Cross-reference suggestions
+
+Every time a memory is created or updated, the server computes cosine-similarity against the existing corpus and stores the top matches. Use `memory_related` to retrieve the linked memories (optionally refreshing the links), and `memory_rebuild_crossrefs` to recompute them for the entire database.
+
+
+Use `memory_semantic_search` to retrieve memories ranked by cosine similarity between lightweight bag-of-words embeddings derived from content, metadata, and tags. The tool accepts `top_k`, optional `metadata_filters`, and an optional `min_score` threshold.
+
+If the embeddings fall out of sync (e.g., after manual DB edits), run `memory_rebuild_embeddings` to regenerate vectors for all entries.
 
 ## Tag utilities
 
