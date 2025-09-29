@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +16,8 @@ from .storage import (
     delete_memories,
     get_memory,
     list_memories,
+    collect_all_tags,
+    find_invalid_tag_entries,
 )
 
 
@@ -81,6 +84,78 @@ def _delete_memories(conn, ids: List[int]):
     return delete_memories(conn, ids)
 
 
+@_with_connection
+def _collect_tags(conn):
+    return collect_all_tags(conn)
+
+
+@_with_connection
+def _find_invalid_tags(conn):
+    from . import TAG_WHITELIST
+
+    return find_invalid_tag_entries(conn, TAG_WHITELIST)
+
+
+def _extract_hierarchy_path(metadata: Optional[Any]) -> List[str]:
+    if not isinstance(metadata, Mapping):
+        return []
+
+    hierarchy = metadata.get("hierarchy")
+    if isinstance(hierarchy, Mapping):
+        raw_path = hierarchy.get("path")
+        if isinstance(raw_path, Sequence) and not isinstance(raw_path, (str, bytes)):
+            return [str(part) for part in raw_path if part is not None]
+
+    path: List[str] = []
+    section = metadata.get("section")
+    if section is not None:
+        path.append(str(section))
+        subsection = metadata.get("subsection")
+        if subsection is not None:
+            path.append(str(subsection))
+    return path
+
+
+def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = False) -> Any:
+    root: Dict[str, Any] = {
+        "name": "root",
+        "path": [],
+        "memories": [],
+        "children": {},
+    }
+
+    for memory in memories:
+        path = _extract_hierarchy_path(memory.get("metadata"))
+        node = root
+        if not path:
+            node["memories"].append(memory)
+            continue
+
+        for part in path:
+            children: Dict[str, Any] = node.setdefault("children", {})
+            if part not in children:
+                children[part] = {
+                    "name": part,
+                    "path": node["path"] + [part],
+                    "memories": [],
+                    "children": {},
+                }
+            node = children[part]
+        node["memories"].append(memory)
+
+    def collapse(node: Dict[str, Any]) -> Dict[str, Any]:
+        children_map: Dict[str, Any] = node.get("children", {})
+        children_list = [collapse(child) for child in children_map.values()]
+        node["children"] = children_list
+        node["count"] = len(node.get("memories", [])) + sum(child["count"] for child in children_list)
+        return node
+
+    collapsed = collapse(root)
+    if include_root:
+        return collapsed
+    return collapsed["children"]
+
+
 @mcp.tool()
 async def memory_create(
     content: str,
@@ -91,7 +166,7 @@ async def memory_create(
     try:
         record = _create_memory(content=content.strip(), metadata=metadata, tags=tags or [])
     except ValueError as exc:
-        return {"error": "invalid_metadata", "message": str(exc)}
+        return {"error": "invalid_input", "message": str(exc)}
     return {"memory": record}
 
 
@@ -140,6 +215,44 @@ async def memory_delete(memory_id: int) -> Dict[str, Any]:
     if _delete_memory(memory_id):
         return {"status": "deleted", "id": memory_id}
     return {"error": "not_found", "id": memory_id}
+
+
+@mcp.tool()
+async def memory_tags() -> Dict[str, Any]:
+    """Return the allowlisted tags."""
+    from . import list_allowed_tags
+
+    return {"allowed": list_allowed_tags()}
+
+
+@mcp.tool()
+async def memory_validate_tags(include_memories: bool = True) -> Dict[str, Any]:
+    """Validate stored tags against the allowlist and report invalid entries."""
+    from . import list_allowed_tags
+
+    invalid_full = _find_invalid_tags()
+    allowed = list_allowed_tags()
+    existing = _collect_tags()
+    response: Dict[str, Any] = {"allowed": allowed, "existing": existing, "invalid_count": len(invalid_full)}
+    if include_memories:
+        response["invalid"] = invalid_full
+    return response
+
+
+@mcp.tool()
+async def memory_hierarchy(
+    query: Optional[str] = None,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    include_root: bool = False,
+) -> Dict[str, Any]:
+    """Return memories organised into a hierarchy derived from their metadata."""
+    try:
+        items = _list_memories(query, metadata_filters)
+    except ValueError as exc:
+        return {"error": "invalid_filters", "message": str(exc)}
+
+    hierarchy = _build_hierarchy_tree(items, include_root=include_root)
+    return {"count": len(items), "hierarchy": hierarchy}
 
 
 def main(argv: Optional[list[str]] = None) -> None:

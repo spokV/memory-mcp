@@ -5,9 +5,12 @@ that persists shared memories in an on-disk SQLite database. The
 `mcp_server.py` entry point exposes a **true MCP server** (via `FastMCP`)
 compatible with the Codex CLI and other MCP-aware clients.
 ## Features
+- Tag validation (allowlist enforced on create/batch create)
 - Zero external dependencies (built with the Python standard library)
 - SQLite-backed storage that survives restarts (`.mcp/memory-mcp/memory_mcp/memories.db`)
 - JSON payloads for easy integration with scripts or other agents
+- Optional inline task lists with per-task completion flags
+- Hierarchical listing tool to explore memories by section/subsection
 
 ## Install
 Install directly from this repository (editable install recommended during development):
@@ -78,6 +81,27 @@ hierarchical information into the following structure:
 }
 ```
 
+### Task tracking metadata
+
+Memories can now include lightweight checklists by supplying a `tasks` array in
+the metadata. Each task requires a `title` and accepts an optional `done`
+boolean:
+
+```json
+{
+  "done": false,
+  "tasks": [
+    {"title": "compare osc_2_hi_res", "done": false},
+    {"title": "prototype RL post-training", "done": true}
+  ]
+}
+```
+
+Tasks may also be provided as plain strings (they will be normalised to objects
+with `done: false`). The top-level `done` field is optional and, when present,
+is coerced into a boolean.
+
+
 You can supply either `section`/`subsection`, a `hierarchy.path` array, or a
 full `hierarchy` object when creating a memory. The server will derive the
 canonical structure shown above so clients can rely on consistent field names.
@@ -104,6 +128,7 @@ to the free-text `query`. Filters support direct matches on keys such as
 }
 ```
 
+
 Filters are applied after any text query, so you can combine substring matching
 with structured metadata selection.
 
@@ -114,6 +139,46 @@ server maintains an auxiliary `memories_fts` index. This enables `memory_list`
 queries to use full-text search semantics (including multi-term queries and
 phrases). If FTS is unavailable or a query is malformed, the server falls back
 to the legacy `LIKE`-based substring search automatically.
+
+## Hierarchical views
+
+Use the `memory_hierarchy` tool to explore memories grouped by their recorded
+`section`/`subsection` (or any `hierarchy.path` supplied at creation time). The
+endpoint accepts the same `query` and `metadata_filters` arguments as
+`memory_list` plus an optional `include_root` flag:
+
+```json
+{
+  "count": 4,
+  "hierarchy": [
+    {
+      "name": "Plan",
+      "path": ["Plan"],
+      "count": 3,
+      "memories": [...],
+      "children": [
+        {
+          "name": "Immediate Actions",
+          "path": ["Plan", "Immediate Actions"],
+          "count": 2,
+          "memories": [...],
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Passing `include_root=true` returns a synthetic root node containing all
+children plus any memories without hierarchy metadata.
+
+
+## Tag utilities
+
+Use `memory_tags` to retrieve the current allowlisted tags enforced by the server. This helps clients surface available categories or validate new entries before calling `memory_create`.
+
+Use `memory_validate_tags` to report stored entries carrying tags outside the allowlist. It returns the allowed set, an invalid count, and (optionally) the offending memory IDs. Configure the allowlist via `MEMORY_MCP_TAGS` (comma-separated) or `MEMORY_MCP_TAG_FILE` (JSON list).
 
 ## Batch operations
 

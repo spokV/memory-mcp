@@ -5,7 +5,7 @@ import json
 import sqlite3
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence as TypingSequence
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "memories.db"
@@ -53,9 +53,17 @@ def _build_metadata_dict(metadata: Mapping[str, Any]) -> Dict[str, Any]:
 
     normalised: Dict[str, Any] = {}
 
-    for key, value in metadata.items():
+    for key in metadata.keys():
         if not isinstance(key, str):
             raise ValueError("Metadata keys must be strings")
+
+    tasks_value = metadata.get("tasks")
+    done_present = "done" in metadata
+    done_value = metadata.get("done")
+
+    for key, value in metadata.items():
+        if key in {"tasks", "done", "hierarchy", "section", "subsection"}:
+            continue
         normalised[key] = value
 
     path: List[str] = []
@@ -96,6 +104,12 @@ def _build_metadata_dict(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     # Always rewrite hierarchy to the canonical form
     normalised.pop("hierarchy", None)
 
+    if tasks_value is not None:
+        normalised["tasks"] = _normalise_tasks(tasks_value)
+
+    if done_present:
+        normalised["done"] = _coerce_bool(done_value) if done_value is not None else False
+
     if path:
         normalised["hierarchy"] = {"path": path}
         normalised["section"] = path[0]
@@ -106,6 +120,68 @@ def _build_metadata_dict(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     else:
         normalised.pop("section", None)
         normalised.pop("subsection", None)
+
+    return normalised
+
+
+TRUE_STRINGS = {"true", "1", "yes", "y", "on"}
+FALSE_STRINGS = {"false", "0", "no", "n", "off"}
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in TRUE_STRINGS:
+            return True
+        if lowered in FALSE_STRINGS:
+            return False
+        raise ValueError("Boolean strings must be true/false, yes/no, on/off, or 1/0")
+    raise ValueError("Boolean fields must be bool-like values")
+
+
+def _normalise_tasks(tasks: Any) -> List[Dict[str, Any]]:
+    if isinstance(tasks, (str, bytes)) or not isinstance(tasks, TypingSequence):
+        raise ValueError("metadata['tasks'] must be a sequence of task entries")
+
+    normalised: List[Dict[str, Any]] = []
+
+    for index, item in enumerate(tasks):
+        if isinstance(item, Mapping):
+            if "title" not in item:
+                raise ValueError(f"Task at index {index} must include a 'title'")
+            title = str(item["title"]).strip()
+            if not title:
+                raise ValueError(f"Task at index {index} must provide a non-empty title")
+            task_entry: Dict[str, Any] = {"title": title}
+            if "done" in item and item["done"] is not None:
+                try:
+                    task_entry["done"] = _coerce_bool(item["done"])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Task at index {index} has an invalid 'done' flag"
+                    ) from exc
+            else:
+                task_entry["done"] = False
+            for key, value in item.items():
+                if key in {"title", "done"}:
+                    continue
+                task_entry[key] = value
+        elif isinstance(item, str):
+            title = item.strip()
+            if not title:
+                raise ValueError(f"Task at index {index} must provide a non-empty title")
+            task_entry = {"title": title, "done": False}
+        else:
+            raise ValueError(
+                "metadata['tasks'] entries must be mappings with 'title' or plain strings"
+            )
+        normalised.append(task_entry)
 
     return normalised
 
@@ -232,6 +308,30 @@ def _serialise_row(row: sqlite3.Row) -> Dict[str, Any]:
     }
 
 
+def _validate_tags(tags: Optional[Iterable[str]]) -> List[str]:
+    if tags is None:
+        return []
+    validated: List[str] = []
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError("Tags must be strings")
+        stripped = tag.strip()
+        if not stripped:
+            raise ValueError("Tags cannot be empty strings")
+        validated.append(stripped)
+    return validated
+
+
+def _enforce_tag_whitelist(tags: List[str]) -> None:
+    from . import TAG_WHITELIST
+
+    if not TAG_WHITELIST:
+        return
+    for tag in tags:
+        if tag not in TAG_WHITELIST:
+            raise ValueError(f"Tag '{tag}' is not in the allowed tag list")
+
+
 def add_memory(
     conn: sqlite3.Connection,
     *,
@@ -240,8 +340,10 @@ def add_memory(
     tags: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     prepared_metadata = _prepare_metadata(metadata)
+    validated_tags = _validate_tags(tags)
+    _enforce_tag_whitelist(validated_tags)
     metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
-    tags_json = json.dumps(tags or [], ensure_ascii=False)
+    tags_json = json.dumps(validated_tags, ensure_ascii=False)
     cur = conn.execute(
         "INSERT INTO memories (content, metadata, tags) VALUES (?, ?, ?)",
         (
@@ -270,8 +372,10 @@ def add_memories(
         metadata = entry.get("metadata")
         tags = entry.get("tags") or []
         prepared_metadata = _prepare_metadata(metadata)
+        validated_tags = _validate_tags(tags)
+        _enforce_tag_whitelist(validated_tags)
         metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
-        tags_json = json.dumps(tags, ensure_ascii=False)
+        tags_json = json.dumps(validated_tags, ensure_ascii=False)
         prepared.append((content, metadata_json, tags_json))
         rows.append({
             "content": content,
@@ -389,3 +493,45 @@ def list_memories(
         records.append(record)
 
     return records
+
+
+def collect_all_tags(conn: sqlite3.Connection) -> List[str]:
+    tags: set[str] = set()
+    rows = conn.execute("SELECT tags FROM memories")
+    for (tags_json,) in rows:
+        if not tags_json:
+            continue
+        try:
+            parsed = json.loads(tags_json)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            for tag in parsed:
+                if isinstance(tag, str) and tag.strip():
+                    tags.add(tag.strip())
+    return sorted(tags)
+
+
+def find_invalid_tag_entries(
+    conn: sqlite3.Connection,
+    allowlist: Iterable[str],
+) -> List[Dict[str, Any]]:
+    allowed = set(allowlist)
+    if not allowed:
+        return []
+
+    invalid: List[Dict[str, Any]] = []
+    rows = conn.execute("SELECT id, tags FROM memories")
+    for memory_id, tags_json in rows:
+        if not tags_json:
+            continue
+        try:
+            parsed = json.loads(tags_json)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, list):
+            continue
+        bad = [str(tag) for tag in parsed if isinstance(tag, str) and tag not in allowed]
+        if bad:
+            invalid.append({"id": memory_id, "invalid_tags": bad})
+    return invalid
