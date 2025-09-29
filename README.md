@@ -177,8 +177,12 @@ children plus any memories without hierarchy metadata.
 ## Tag utilities
 
 Use `memory_tags` to retrieve the current allowlisted tags enforced by the server. This helps clients surface available categories or validate new entries before calling `memory_create`.
+Use `memory_tag_hierarchy` to inspect the current tags arranged by dotted namespace.
+
 
 Use `memory_validate_tags` to report stored entries carrying tags outside the allowlist. It returns the allowed set, an invalid count, and (optionally) the offending memory IDs. Configure the allowlist via `MEMORY_MCP_TAGS` (comma-separated) or `MEMORY_MCP_TAG_FILE` (JSON list).
+
+Allowed tags can use wildcard namespaces (e.g. `beamng.*`) using `MEMORY_MCP_TAGS` or `MEMORY_MCP_TAG_FILE`. Wildcards permit any dotted suffix (like `beamng.plan` or `beamng.plan.rl`).
 
 ## Batch operations
 

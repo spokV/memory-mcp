@@ -96,6 +96,35 @@ def _find_invalid_tags(conn):
     return find_invalid_tag_entries(conn, TAG_WHITELIST)
 
 
+def _build_tag_hierarchy(tags):
+    root = {"name": "root", "path": [], "children": {}, "tags": []}
+    for tag in tags:
+        parts = tag.split('.')
+        node = root
+        if not parts:
+            continue
+        for idx, part in enumerate(parts):
+            children = node.setdefault("children", {})
+            if part not in children:
+                children[part] = {
+                    "name": part,
+                    "path": node["path"] + [part],
+                    "children": {},
+                    "tags": []
+                }
+            node = children[part]
+        node.setdefault("tags", []).append(tag)
+    return _collapse_tag_tree(root)
+
+
+def _collapse_tag_tree(node):
+    children_map = node.get("children", {})
+    children_list = [_collapse_tag_tree(child) for child in children_map.values()]
+    node["children"] = children_list
+    node["count"] = len(node.get("tags", [])) + sum(child["count"] for child in children_list)
+    return {key: value for key, value in node.items() if key != "children" or value}
+
+
 def _extract_hierarchy_path(metadata: Optional[Any]) -> List[str]:
     if not isinstance(metadata, Mapping):
         return []
@@ -223,6 +252,17 @@ async def memory_tags() -> Dict[str, Any]:
     from . import list_allowed_tags
 
     return {"allowed": list_allowed_tags()}
+
+
+@mcp.tool()
+async def memory_tag_hierarchy(include_root: bool = False) -> Dict[str, Any]:
+    """Return stored tags organised as a namespace hierarchy."""
+
+    tags = _collect_tags()
+    tree = _build_tag_hierarchy(tags)
+    if not include_root and isinstance(tree, dict):
+        tree = tree.get("children", [])
+    return {"count": len(tags), "hierarchy": tree}
 
 
 @mcp.tool()

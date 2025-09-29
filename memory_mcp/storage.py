@@ -327,9 +327,16 @@ def _enforce_tag_whitelist(tags: List[str]) -> None:
 
     if not TAG_WHITELIST:
         return
+
+    explicit = {tag for tag in TAG_WHITELIST if not tag.endswith('.*')}
+    wildcards = [tag[:-2] for tag in TAG_WHITELIST if tag.endswith('.*')]
+
     for tag in tags:
-        if tag not in TAG_WHITELIST:
-            raise ValueError(f"Tag '{tag}' is not in the allowed tag list")
+        if tag in explicit:
+            continue
+        if any(tag == prefix or tag.startswith(prefix + '.') for prefix in wildcards):
+            continue
+        raise ValueError(f"Tag '{tag}' is not in the allowed tag list")
 
 
 def add_memory(
@@ -520,6 +527,9 @@ def find_invalid_tag_entries(
     if not allowed:
         return []
 
+    explicit = {tag for tag in allowed if not tag.endswith('.*')}
+    wildcards = [tag[:-2] for tag in allowed if tag.endswith('.*')]
+
     invalid: List[Dict[str, Any]] = []
     rows = conn.execute("SELECT id, tags FROM memories")
     for memory_id, tags_json in rows:
@@ -531,7 +541,15 @@ def find_invalid_tag_entries(
             continue
         if not isinstance(parsed, list):
             continue
-        bad = [str(tag) for tag in parsed if isinstance(tag, str) and tag not in allowed]
+        bad: List[str] = []
+        for tag in parsed:
+            if not isinstance(tag, str):
+                continue
+            if tag in explicit:
+                continue
+            if any(tag == prefix or tag.startswith(prefix + '.') for prefix in wildcards):
+                continue
+            bad.append(tag)
         if bad:
             invalid.append({"id": memory_id, "invalid_tags": bad})
     return invalid
