@@ -11,18 +11,24 @@ from mcp.server.fastmcp import FastMCP
 from .storage import (
     add_memory,
     add_memories,
+    clear_events,
     collect_all_tags,
     connect,
     delete_memory,
     delete_memories,
+    export_memories,
     find_invalid_tag_entries,
     get_crossrefs,
     get_memory,
+    get_statistics,
+    import_memories,
     list_memories,
+    poll_events,
     rebuild_embeddings,
     rebuild_crossrefs,
     semantic_search,
     update_crossrefs,
+    update_memory,
 )
 
 
@@ -70,6 +76,17 @@ def _get_memory(conn, memory_id: int):
 
 
 @_with_connection
+def _update_memory(
+    conn,
+    memory_id: int,
+    content: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    tags: Optional[list[str]],
+):
+    return update_memory(conn, memory_id, content=content, metadata=metadata, tags=tags)
+
+
+@_with_connection
 def _delete_memory(conn, memory_id: int):
     return delete_memory(conn, memory_id)
 
@@ -81,8 +98,13 @@ def _list_memories(
     metadata_filters: Optional[Dict[str, Any]],
     limit: Optional[int],
     offset: Optional[int],
+    date_from: Optional[str],
+    date_to: Optional[str],
+    tags_any: Optional[List[str]],
+    tags_all: Optional[List[str]],
+    tags_none: Optional[List[str]],
 ):
-    return list_memories(conn, query, metadata_filters, limit, offset)
+    return list_memories(conn, query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
 
 
 @_with_connection
@@ -143,6 +165,21 @@ def _semantic_search(
 @_with_connection
 def _rebuild_embeddings(conn):
     return rebuild_embeddings(conn)
+
+
+@_with_connection
+def _get_statistics(conn):
+    return get_statistics(conn)
+
+
+@_with_connection
+def _export_memories(conn):
+    return export_memories(conn)
+
+
+@_with_connection
+def _import_memories(conn, data: List[Dict[str, Any]], strategy: str):
+    return import_memories(conn, data, strategy)
 
 
 def _build_tag_hierarchy(tags):
@@ -254,6 +291,11 @@ async def memory_list(
     metadata_filters: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = 0,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """List memories, optionally filtering by substring query or metadata.
 
@@ -262,9 +304,14 @@ async def memory_list(
         metadata_filters: Optional metadata filters
         limit: Maximum number of results to return (default: unlimited)
         offset: Number of results to skip (default: 0)
+        date_from: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        date_to: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        tags_any: Match memories with ANY of these tags (OR logic)
+        tags_all: Match memories with ALL of these tags (AND logic)
+        tags_none: Exclude memories with ANY of these tags (NOT logic)
     """
     try:
-        items = _list_memories(query, metadata_filters, limit, offset)
+        items = _list_memories(query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
     return {"count": len(items), "memories": items}
@@ -276,6 +323,11 @@ async def memory_list_compact(
     metadata_filters: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = 0,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """List memories in compact format (id, preview, tags only) to reduce context usage.
 
@@ -287,9 +339,14 @@ async def memory_list_compact(
         metadata_filters: Optional metadata filters
         limit: Maximum number of results to return (default: unlimited)
         offset: Number of results to skip (default: 0)
+        date_from: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        date_to: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        tags_any: Match memories with ANY of these tags (OR logic)
+        tags_all: Match memories with ALL of these tags (AND logic)
+        tags_none: Exclude memories with ANY of these tags (NOT logic)
     """
     try:
-        items = _list_memories(query, metadata_filters, limit, offset)
+        items = _list_memories(query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
 
@@ -329,6 +386,23 @@ async def memory_delete_batch(ids: List[int]) -> Dict[str, Any]:
 async def memory_get(memory_id: int) -> Dict[str, Any]:
     """Retrieve a single memory by id."""
     record = _get_memory(memory_id)
+    if not record:
+        return {"error": "not_found", "id": memory_id}
+    return {"memory": record}
+
+
+@mcp.tool()
+async def memory_update(
+    memory_id: int,
+    content: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    tags: Optional[list[str]] = None,
+) -> Dict[str, Any]:
+    """Update an existing memory. Only provided fields are updated."""
+    try:
+        record = _update_memory(memory_id, content, metadata, tags)
+    except ValueError as exc:
+        return {"error": "invalid_input", "message": str(exc)}
     if not record:
         return {"error": "not_found", "id": memory_id}
     return {"memory": record}
@@ -380,10 +454,15 @@ async def memory_hierarchy(
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
     include_root: bool = False,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Return memories organised into a hierarchy derived from their metadata."""
     try:
-        items = _list_memories(query, metadata_filters)
+        items = _list_memories(query, metadata_filters, None, 0, date_from, date_to, tags_any, tags_all, tags_none)
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
 
@@ -434,6 +513,88 @@ async def memory_rebuild_crossrefs() -> Dict[str, Any]:
 
     updated = _rebuild_crossrefs()
     return {"updated": updated}
+
+
+@mcp.tool()
+async def memory_stats() -> Dict[str, Any]:
+    """Get statistics and analytics about stored memories."""
+
+    return _get_statistics()
+
+
+@mcp.tool()
+async def memory_export() -> Dict[str, Any]:
+    """Export all memories to JSON format for backup or transfer."""
+
+    memories = _export_memories()
+    return {"count": len(memories), "memories": memories}
+
+
+@mcp.tool()
+async def memory_import(
+    data: List[Dict[str, Any]],
+    strategy: str = "append",
+) -> Dict[str, Any]:
+    """Import memories from JSON format.
+
+    Args:
+        data: List of memory dictionaries with content, metadata, tags, created_at
+        strategy: "replace" (clear all first), "merge" (skip duplicates), or "append" (add all)
+    """
+    try:
+        result = _import_memories(data, strategy)
+    except ValueError as exc:
+        return {"error": "invalid_input", "message": str(exc)}
+    return result
+
+
+@_with_connection
+def _poll_events(
+    conn,
+    since_timestamp: Optional[str],
+    tags_filter: Optional[List[str]],
+    unconsumed_only: bool,
+):
+    return poll_events(conn, since_timestamp, tags_filter, unconsumed_only)
+
+
+@_with_connection
+def _clear_events(conn, event_ids: List[int]):
+    return clear_events(conn, event_ids)
+
+
+@mcp.tool()
+async def memory_events_poll(
+    since_timestamp: Optional[str] = None,
+    tags_filter: Optional[List[str]] = None,
+    unconsumed_only: bool = True,
+) -> Dict[str, Any]:
+    """Poll for memory events (e.g., shared-cache notifications).
+
+    Args:
+        since_timestamp: Only return events after this timestamp (ISO format)
+        tags_filter: Only return events with these tags (e.g., ["shared-cache"])
+        unconsumed_only: Only return unconsumed events (default: True)
+
+    Returns:
+        Dictionary with count and list of events
+    """
+    events = _poll_events(since_timestamp, tags_filter, unconsumed_only)
+    return {"count": len(events), "events": events}
+
+
+@mcp.tool()
+async def memory_events_clear(event_ids: List[int]) -> Dict[str, Any]:
+    """Mark events as consumed.
+
+    Args:
+        event_ids: List of event IDs to mark as consumed
+
+    Returns:
+        Dictionary with count of cleared events
+    """
+    cleared = _clear_events(event_ids)
+    return {"cleared": cleared}
 
 
 def main(argv: Optional[list[str]] = None) -> None:

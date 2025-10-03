@@ -5,14 +5,20 @@ that persists shared memories in an on-disk SQLite database. The
 `mcp_server.py` entry point exposes a **true MCP server** (via `FastMCP`)
 compatible with the Codex CLI and other MCP-aware clients.
 ## Features
-- Semantic search (vector embeddings for concept queries)
-- Cross-reference suggestions (auto-linked related memories)
-- Tag validation (allowlist enforced on create/batch create)
-- Zero external dependencies (built with the Python standard library)
-- SQLite-backed storage that survives restarts (`.mcp/memory-mcp/memory_mcp/memories.db`)
-- JSON payloads for easy integration with scripts or other agents
-- Optional inline task lists with per-task completion flags
-- Hierarchical listing tool to explore memories by section/subsection
+- **Memory Updates** - Edit existing memories without recreating them
+- **Date Range Filtering** - Query memories by creation date with ISO or relative formats (7d, 1m, 1y)
+- **Advanced Tag Queries** - Filter with AND/OR/NOT logic using tags_any, tags_all, tags_none
+- **Statistics & Analytics** - Get insights on tag usage, sections, monthly trends, and connections
+- **Export/Import** - Backup and restore memories with merge, replace, or append strategies
+- **Multiple Embedding Backends** - Choose between TF-IDF (default), sentence-transformers, or OpenAI
+- **Semantic Search** - Vector embeddings for concept-based queries
+- **Cross-reference Suggestions** - Auto-linked related memories
+- **Tag Validation** - Allowlist enforced on create/batch create
+- **Zero External Dependencies** - Built with Python standard library (optional backends available)
+- **SQLite-backed Storage** - Persistent storage at `.mcp/memory-mcp/memory_mcp/memories.db`
+- **JSON Payloads** - Easy integration with scripts or other agents
+- **Task Lists** - Optional inline task lists with per-task completion flags
+- **Hierarchical Listing** - Explore memories by section/subsection
 
 ## Install
 Install directly from this repository (editable install recommended during development):
@@ -166,6 +172,107 @@ memory_list_compact(query="training", metadata_filters={"section": "Plan"})
 
 Once you identify memories of interest, use `memory_get` to retrieve full details.
 
+### Memory updates
+
+Use `memory_update` to edit existing memories without recreating them:
+
+```python
+# Update only content
+memory_update(memory_id=42, content="Updated content here")
+
+# Update only tags
+memory_update(memory_id=42, tags=["beamng", "training"])
+
+# Update multiple fields
+memory_update(
+    memory_id=42,
+    content="New content",
+    metadata={"section": "Plan", "status": "completed"},
+    tags=["beamng", "plan"]
+)
+```
+
+Only the fields you provide are updated. The `created_at` timestamp is preserved, and embeddings and cross-references are automatically updated.
+
+### Date range filtering
+
+Both `memory_list` and `memory_list_compact` support date filtering with `date_from` and `date_to` parameters. Dates can be ISO format or relative:
+
+```python
+# ISO format
+memory_list(date_from="2025-09-01", date_to="2025-09-30")
+
+# Relative dates
+memory_list(date_from="7d")  # Last 7 days
+memory_list(date_from="1m")  # Last 1 month
+memory_list(date_from="1y")  # Last 1 year
+
+# Combine with other filters
+memory_list(
+    query="beamng",
+    date_from="30d",
+    tags_any=["training", "experiments"]
+)
+```
+
+### Advanced tag queries
+
+Filter memories with complex tag logic using `tags_any` (OR), `tags_all` (AND), and `tags_none` (NOT):
+
+```python
+# Match memories with ANY of these tags (OR logic)
+memory_list(tags_any=["beamng", "laq"])
+
+# Match memories with ALL of these tags (AND logic)
+memory_list(tags_all=["beamng", "training"])
+
+# Exclude memories with ANY of these tags (NOT logic)
+memory_list(tags_none=["archived", "deprecated"])
+
+# Combine multiple tag filters
+memory_list(
+    tags_all=["beamng", "plan"],
+    tags_none=["completed"]
+)
+```
+
+Tag filters work with all listing endpoints: `memory_list`, `memory_list_compact`, and `memory_hierarchy`.
+
+### Statistics and analytics
+
+Use `memory_stats` to get insights about your memory collection:
+
+```python
+stats = memory_stats()
+```
+
+Returns:
+- `total_memories` - Total count
+- `unique_tags` - Number of unique tags
+- `tag_counts` - Tag usage frequency (sorted)
+- `section_counts` - Memories per section
+- `subsection_counts` - Memories per subsection
+- `monthly_counts` - Memories created per month
+- `most_connected` - Top 10 memories by cross-reference count
+- `date_range` - Oldest and newest timestamps
+
+### Export and import
+
+Backup or transfer memories with `memory_export` and `memory_import`:
+
+```python
+# Export all memories
+export = memory_export()
+# Returns: {"count": 81, "memories": [...]}
+
+# Import with different strategies
+memory_import(data=export["memories"], strategy="append")   # Add all
+memory_import(data=export["memories"], strategy="merge")    # Skip duplicates
+memory_import(data=export["memories"], strategy="replace")  # Clear and replace
+```
+
+The export format preserves all fields including `created_at` timestamps. Import automatically rebuilds embeddings and cross-references.
+
 ### Full-text search
 
 When SQLite is compiled with FTS5 support (default on most platforms), the
@@ -208,15 +315,56 @@ Passing `include_root=true` returns a synthetic root node containing all
 children plus any memories without hierarchy metadata.
 
 
-## Semantic search
+## Semantic search and embeddings
+
+Use `memory_semantic_search` to retrieve memories ranked by cosine similarity using vector embeddings:
+
+```python
+memory_semantic_search(
+    query="steering control optimization",
+    top_k=5,
+    metadata_filters={"section": "Plan"},
+    min_score=0.3
+)
+```
+
+### Embedding backends
+
+The server supports three embedding backends:
+
+**TF-IDF** (default, no dependencies):
+```bash
+MEMORY_MCP_EMBEDDING_MODEL=tfidf
+```
+Lightweight bag-of-words approach. Fast and reliable for keyword matching.
+
+**Sentence-Transformers** (better semantic understanding):
+```bash
+MEMORY_MCP_EMBEDDING_MODEL=sentence-transformers
+SENTENCE_TRANSFORMERS_MODEL=all-MiniLM-L6-v2  # Optional, this is default
+```
+Requires: `pip install sentence-transformers`
+
+Much better semantic understanding. Automatically falls back to TF-IDF if library unavailable.
+
+**OpenAI** (highest quality):
+```bash
+MEMORY_MCP_EMBEDDING_MODEL=openai
+OPENAI_API_KEY=sk-...
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small  # Optional, this is default
+```
+Requires: `pip install openai`
+
+Best semantic quality but requires API key and has cost. Falls back to TF-IDF if unavailable or errors occur.
+
+After changing embedding backends, rebuild embeddings:
+```python
+memory_rebuild_embeddings()
+```
+
 ## Cross-reference suggestions
 
 Every time a memory is created or updated, the server computes cosine-similarity against the existing corpus and stores the top matches. Use `memory_related` to retrieve the linked memories (optionally refreshing the links), and `memory_rebuild_crossrefs` to recompute them for the entire database.
-
-
-Use `memory_semantic_search` to retrieve memories ranked by cosine similarity between lightweight bag-of-words embeddings derived from content, metadata, and tags. The tool accepts `top_k`, optional `metadata_filters`, and an optional `min_score` threshold.
-
-If the embeddings fall out of sync (e.g., after manual DB edits), run `memory_rebuild_embeddings` to regenerate vectors for all entries.
 
 ## Tag utilities
 

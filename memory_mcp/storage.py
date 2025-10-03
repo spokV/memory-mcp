@@ -3,15 +3,38 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence as TypingSequence
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "memories.db"
+
+# Embedding backend configuration
+EMBEDDING_MODEL = os.getenv("MEMORY_MCP_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
+
+# Event notification configuration
+EVENT_TRIGGER_TAG = "shared-cache"
+
+
+def _emit_event(conn: sqlite3.Connection, memory_id: int, tags: List[str]) -> None:
+    """Emit an event notification if memory has the trigger tag."""
+    if EVENT_TRIGGER_TAG in tags:
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        try:
+            conn.execute(
+                "INSERT INTO memories_events (memory_id, tags) VALUES (?, ?)",
+                (memory_id, tags_json)
+            )
+            conn.commit()
+        except Exception:
+            # Don't fail memory operations if event emission fails
+            pass
 
 
 def connect(*, check_same_thread: bool = True) -> sqlite3.Connection:
@@ -37,6 +60,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_fts(conn)
     _ensure_embeddings_table(conn)
     _ensure_crossrefs_table(conn)
+    _ensure_events_table(conn)
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
@@ -72,6 +96,22 @@ def _ensure_crossrefs_table(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS memories_crossrefs (
             memory_id INTEGER PRIMARY KEY,
             related TEXT,
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.commit()
+
+
+def _ensure_events_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL,
+            tags TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+            consumed INTEGER DEFAULT 0,
             FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
         )
         """
@@ -372,12 +412,16 @@ def _enforce_tag_whitelist(tags: List[str]) -> None:
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+# Cache for embedding models
+_embedding_model_cache: Dict[str, Any] = {}
 
-def _compute_embedding(
+
+def _get_embedding_text(
     content: str,
     metadata: Optional[Dict[str, Any]],
     tags: List[str],
-) -> Dict[str, float]:
+) -> str:
+    """Combine content, metadata, and tags into a single text for embedding."""
     parts: List[str] = [content]
 
     if metadata:
@@ -390,8 +434,12 @@ def _compute_embedding(
     if tags:
         parts.append(" ".join(tags))
 
-    joined = " \n ".join(parts).lower()
-    tokens = _TOKEN_RE.findall(joined)
+    return " \n ".join(parts)
+
+
+def _compute_embedding_tfidf(text: str) -> Dict[str, float]:
+    """TF-IDF style bag-of-words embedding (default, no dependencies)."""
+    tokens = _TOKEN_RE.findall(text.lower())
     if not tokens:
         return {}
 
@@ -401,6 +449,79 @@ def _compute_embedding(
         return {}
 
     return {token: count / total for token, count in counts.items()}
+
+
+def _compute_embedding_sentence_transformers(text: str) -> Dict[str, float]:
+    """Use sentence-transformers for better semantic embeddings."""
+    try:
+        if "sentence_transformers" not in _embedding_model_cache:
+            from sentence_transformers import SentenceTransformer
+            # Use a small, fast model by default
+            model_name = os.getenv("SENTENCE_TRANSFORMERS_MODEL", "all-MiniLM-L6-v2")
+            _embedding_model_cache["sentence_transformers"] = SentenceTransformer(model_name)
+
+        model = _embedding_model_cache["sentence_transformers"]
+        embedding = model.encode(text, convert_to_numpy=True)
+
+        # Convert numpy array to dict for storage (use indices as keys)
+        return {str(i): float(val) for i, val in enumerate(embedding)}
+
+    except ImportError:
+        # Fallback to TF-IDF if sentence-transformers not available
+        return _compute_embedding_tfidf(text)
+    except Exception:
+        # Fallback on any error
+        return _compute_embedding_tfidf(text)
+
+
+def _compute_embedding_openai(text: str) -> Dict[str, float]:
+    """Use OpenAI embeddings API."""
+    try:
+        import openai
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Fallback to TF-IDF if no API key
+            return _compute_embedding_tfidf(text)
+
+        if "openai_client" not in _embedding_model_cache:
+            _embedding_model_cache["openai_client"] = openai.OpenAI(api_key=api_key)
+
+        client = _embedding_model_cache["openai_client"]
+        model_name = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+
+        response = client.embeddings.create(
+            input=text,
+            model=model_name,
+        )
+
+        embedding = response.data[0].embedding
+
+        # Convert to dict for storage
+        return {str(i): float(val) for i, val in enumerate(embedding)}
+
+    except ImportError:
+        # Fallback to TF-IDF if openai not available
+        return _compute_embedding_tfidf(text)
+    except Exception:
+        # Fallback on any error (API error, rate limit, etc.)
+        return _compute_embedding_tfidf(text)
+
+
+def _compute_embedding(
+    content: str,
+    metadata: Optional[Dict[str, Any]],
+    tags: List[str],
+) -> Dict[str, float]:
+    """Compute embedding using configured backend."""
+    text = _get_embedding_text(content, metadata, tags)
+
+    if EMBEDDING_MODEL == "sentence-transformers":
+        return _compute_embedding_sentence_transformers(text)
+    elif EMBEDDING_MODEL == "openai":
+        return _compute_embedding_openai(text)
+    else:  # Default to tfidf
+        return _compute_embedding_tfidf(text)
 
 
 def _embedding_to_json(vector: Dict[str, float]) -> Optional[str]:
@@ -650,6 +771,7 @@ def add_memory(
     _upsert_embedding(conn, memory_id, vector)
     _update_crossrefs(conn, memory_id)
     conn.commit()
+    _emit_event(conn, memory_id, validated_tags)
     return get_memory(conn, memory_id)
 
 
@@ -677,6 +799,7 @@ def add_memories(
             "content": content,
             "metadata_json": metadata_json,
             "tags_json": tags_json,
+            "validated_tags": validated_tags,
         })
         embeddings.append(_compute_embedding(content, prepared_metadata, validated_tags))
 
@@ -698,6 +821,11 @@ def add_memories(
         _update_crossrefs(conn, memory_id)
 
     conn.commit()
+
+    # Emit events for memories with trigger tag
+    for memory_id, entry in zip(inserted, rows):
+        _emit_event(conn, memory_id, entry["validated_tags"])
+
     return [get_memory(conn, memory_id) for memory_id in inserted]
 
 
@@ -711,6 +839,53 @@ def get_memory(conn: sqlite3.Connection, memory_id: int) -> Optional[Dict[str, A
     record = _serialise_row(row)
     record["related"] = get_crossrefs(conn, memory_id)
     return record
+
+
+def update_memory(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    *,
+    content: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    tags: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Update an existing memory. Only provided fields are updated."""
+    # First check if memory exists
+    existing = get_memory(conn, memory_id)
+    if not existing:
+        return None
+
+    # Determine what to update
+    new_content = content.strip() if content is not None else existing["content"]
+    new_metadata = _prepare_metadata(metadata) if metadata is not None else existing.get("metadata")
+    new_tags = _validate_tags(tags) if tags is not None else existing.get("tags", [])
+
+    if tags is not None:
+        _enforce_tag_whitelist(new_tags)
+
+    # Serialize for storage
+    metadata_json = json.dumps(new_metadata, ensure_ascii=False) if new_metadata else None
+    tags_json = json.dumps(new_tags, ensure_ascii=False)
+
+    # Update the memory
+    conn.execute(
+        "UPDATE memories SET content = ?, metadata = ?, tags = ? WHERE id = ?",
+        (new_content, metadata_json, tags_json, memory_id),
+    )
+
+    # Update FTS index
+    _fts_upsert(conn, memory_id, new_content, metadata_json, tags_json)
+
+    # Update embeddings
+    vector = _compute_embedding(new_content, new_metadata, new_tags)
+    _upsert_embedding(conn, memory_id, vector)
+
+    # Update cross-references
+    _update_crossrefs(conn, memory_id)
+
+    conn.commit()
+    _emit_event(conn, memory_id, new_tags)
+    return get_memory(conn, memory_id)
 
 
 def delete_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
@@ -740,16 +915,72 @@ def delete_memories(conn: sqlite3.Connection, memory_ids: Iterable[int]) -> int:
     return len(ids)
 
 
+def _parse_date_filter(date_str: str) -> str:
+    """Parse date string to ISO format. Supports ISO dates and relative formats like '7d', '1m', '1y'."""
+    if not date_str:
+        return date_str
+
+    # Try ISO format first
+    try:
+        parsed = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        return parsed.strftime('%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        pass
+
+    # Try relative formats: 7d, 1m, 1y, etc.
+    match = re.match(r'^(\d+)([dmyDMY])$', date_str.strip())
+    if match:
+        value = int(match.group(1))
+        unit = match.group(2).lower()
+
+        now = datetime.utcnow()
+        if unit == 'd':
+            target = now - timedelta(days=value)
+        elif unit == 'm':
+            target = now - timedelta(days=value * 30)  # Approximate
+        elif unit == 'y':
+            target = now - timedelta(days=value * 365)  # Approximate
+        else:
+            raise ValueError(f"Unknown time unit: {unit}")
+
+        return target.strftime('%Y-%m-%d %H:%M:%S')
+
+    raise ValueError(f"Invalid date format: {date_str}")
+
+
 def list_memories(
     conn: sqlite3.Connection,
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = 0,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     validated_filters = _validate_metadata_filters(metadata_filters)
 
     rows: List[sqlite3.Row]
+
+    # Parse date filters
+    parsed_date_from = _parse_date_filter(date_from) if date_from else None
+    parsed_date_to = _parse_date_filter(date_to) if date_to else None
+
+    # Build date filter clauses (one with alias 'm.' for FTS, one without for regular queries)
+    date_clause_fts = ""  # For FTS queries using alias 'm'
+    date_clause_plain = ""  # For non-FTS queries
+    date_params = []
+
+    if parsed_date_from:
+        date_clause_fts += " AND m.created_at >= ?"
+        date_clause_plain += " AND created_at >= ?"
+        date_params.append(parsed_date_from)
+    if parsed_date_to:
+        date_clause_fts += " AND m.created_at <= ?"
+        date_clause_plain += " AND created_at <= ?"
+        date_params.append(parsed_date_to)
 
     # Build LIMIT/OFFSET clause
     limit_clause = ""
@@ -769,10 +1000,10 @@ def list_memories(
                 SELECT m.id, m.content, m.metadata, m.tags, m.created_at
                 FROM memories m
                 JOIN memories_fts f ON m.id = f.rowid
-                WHERE f MATCH ?
+                WHERE f MATCH ?{date_clause_fts}
                 ORDER BY m.created_at DESC{limit_clause}
                 """,
-                (query, *limit_params),
+                (query, *date_params, *limit_params),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
@@ -782,15 +1013,16 @@ def list_memories(
             f"""
             SELECT id, content, metadata, tags, created_at
             FROM memories
-            WHERE content LIKE ? OR tags LIKE ? OR metadata LIKE ?
+            WHERE (content LIKE ? OR tags LIKE ? OR metadata LIKE ?){date_clause_plain}
             ORDER BY created_at DESC{limit_clause}
             """,
-            (pattern, pattern, pattern, *limit_params),
+            (pattern, pattern, pattern, *date_params, *limit_params),
         ).fetchall()
     else:
+        where_clause = " WHERE 1=1" + date_clause_plain if date_clause_plain else ""
         rows = conn.execute(
-            f"SELECT id, content, metadata, tags, created_at FROM memories ORDER BY created_at DESC{limit_clause}",
-            tuple(limit_params),
+            f"SELECT id, content, metadata, tags, created_at FROM memories{where_clause} ORDER BY created_at DESC{limit_clause}",
+            tuple([*date_params, *limit_params]),
         ).fetchall()
 
     # If the FTS search yielded nothing because of an SQLite error (e.g. malformed query)
@@ -801,10 +1033,10 @@ def list_memories(
             f"""
             SELECT id, content, metadata, tags, created_at
             FROM memories
-            WHERE content LIKE ? OR tags LIKE ? OR metadata LIKE ?
+            WHERE (content LIKE ? OR tags LIKE ? OR metadata LIKE ?){date_clause_plain}
             ORDER BY created_at DESC{limit_clause}
             """,
-            (pattern, pattern, pattern, *limit_params),
+            (pattern, pattern, pattern, *date_params, *limit_params),
         ).fetchall()
 
     records: List[Dict[str, Any]] = []
@@ -812,6 +1044,25 @@ def list_memories(
         record = _serialise_row(row)
         if validated_filters and not _metadata_matches_filters(record.get("metadata"), validated_filters):
             continue
+
+        # Apply tag filters
+        record_tags = set(record.get("tags", []))
+
+        # tags_any: match if ANY of the specified tags are present (OR logic)
+        if tags_any:
+            if not any(tag in record_tags for tag in tags_any):
+                continue
+
+        # tags_all: match only if ALL of the specified tags are present (AND logic)
+        if tags_all:
+            if not all(tag in record_tags for tag in tags_all):
+                continue
+
+        # tags_none: exclude if ANY of the specified tags are present (NOT logic)
+        if tags_none:
+            if any(tag in record_tags for tag in tags_none):
+                continue
+
         records.append(record)
 
     return records
@@ -904,3 +1155,269 @@ def rebuild_embeddings(conn: sqlite3.Connection) -> int:
         updated += 1
     conn.commit()
     return updated
+
+
+def get_statistics(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Gather statistics about stored memories."""
+    stats: Dict[str, Any] = {}
+
+    # Total count
+    total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    stats["total_memories"] = total
+
+    # Tag statistics
+    tag_counts: Dict[str, int] = {}
+    rows = conn.execute("SELECT tags FROM memories").fetchall()
+    for (tags_json,) in rows:
+        if tags_json:
+            try:
+                tags = json.loads(tags_json)
+                if isinstance(tags, list):
+                    for tag in tags:
+                        if isinstance(tag, str):
+                            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            except json.JSONDecodeError:
+                pass
+
+    stats["tag_counts"] = dict(sorted(tag_counts.items(), key=lambda x: x[1], reverse=True))
+    stats["unique_tags"] = len(tag_counts)
+
+    # Section statistics
+    section_counts: Dict[str, int] = {}
+    subsection_counts: Dict[str, int] = {}
+    rows = conn.execute("SELECT metadata FROM memories").fetchall()
+    for (metadata_json,) in rows:
+        if metadata_json:
+            try:
+                metadata = json.loads(metadata_json)
+                if isinstance(metadata, dict):
+                    section = metadata.get("section")
+                    if section:
+                        section_counts[section] = section_counts.get(section, 0) + 1
+                    subsection = metadata.get("subsection")
+                    if subsection:
+                        subsection_counts[subsection] = subsection_counts.get(subsection, 0) + 1
+            except json.JSONDecodeError:
+                pass
+
+    stats["section_counts"] = dict(sorted(section_counts.items(), key=lambda x: x[1], reverse=True))
+    stats["subsection_counts"] = dict(sorted(subsection_counts.items(), key=lambda x: x[1], reverse=True))
+
+    # Date-based statistics (memories per month)
+    monthly_counts: Dict[str, int] = {}
+    rows = conn.execute("SELECT created_at FROM memories").fetchall()
+    for (created_at,) in rows:
+        if created_at:
+            try:
+                # Extract YYYY-MM from timestamp
+                month = created_at[:7]  # "2025-09"
+                monthly_counts[month] = monthly_counts.get(month, 0) + 1
+            except (IndexError, TypeError):
+                pass
+
+    stats["monthly_counts"] = dict(sorted(monthly_counts.items()))
+
+    # Cross-reference statistics (most connected memories)
+    crossref_counts: List[tuple[int, int]] = []
+    rows = conn.execute("SELECT memory_id, related FROM memories_crossrefs").fetchall()
+    for memory_id, related_json in rows:
+        if related_json:
+            try:
+                related = json.loads(related_json)
+                if isinstance(related, list):
+                    crossref_counts.append((memory_id, len(related)))
+            except json.JSONDecodeError:
+                pass
+
+    # Sort by count and take top 10
+    crossref_counts.sort(key=lambda x: x[1], reverse=True)
+    stats["most_connected"] = [
+        {"memory_id": memory_id, "connections": count}
+        for memory_id, count in crossref_counts[:10]
+    ]
+
+    # Date range
+    date_range = conn.execute(
+        "SELECT MIN(created_at), MAX(created_at) FROM memories"
+    ).fetchone()
+    if date_range and date_range[0]:
+        stats["date_range"] = {
+            "oldest": date_range[0],
+            "newest": date_range[1],
+        }
+
+    return stats
+
+
+def export_memories(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Export all memories to a JSON-serializable list."""
+    rows = conn.execute(
+        "SELECT id, content, metadata, tags, created_at FROM memories ORDER BY id"
+    ).fetchall()
+
+    exported: List[Dict[str, Any]] = []
+    for row in rows:
+        metadata = row["metadata"]
+        tags = row["tags"]
+        exported.append({
+            "id": row["id"],
+            "content": row["content"],
+            "metadata": json.loads(metadata) if metadata else None,
+            "tags": json.loads(tags) if tags else [],
+            "created_at": row["created_at"],
+        })
+
+    return exported
+
+
+def import_memories(
+    conn: sqlite3.Connection,
+    data: List[Dict[str, Any]],
+    strategy: str = "append",
+) -> Dict[str, Any]:
+    """Import memories from a JSON list.
+
+    Args:
+        conn: Database connection
+        data: List of memory dictionaries
+        strategy: "replace" (clear all first), "merge" (skip duplicates), "append" (add all)
+
+    Returns:
+        Dictionary with import statistics
+    """
+    if strategy not in ("replace", "merge", "append"):
+        raise ValueError("strategy must be 'replace', 'merge', or 'append'")
+
+    # Replace: clear database first
+    if strategy == "replace":
+        conn.execute("DELETE FROM memories")
+        conn.execute("DELETE FROM memories_fts")
+        conn.execute("DELETE FROM memories_embeddings")
+        conn.execute("DELETE FROM memories_crossrefs")
+        conn.commit()
+
+    imported = 0
+    skipped = 0
+    errors = []
+
+    # Get existing content hashes for merge strategy
+    existing_contents: set[str] = set()
+    if strategy == "merge":
+        rows = conn.execute("SELECT content FROM memories").fetchall()
+        existing_contents = {row["content"] for row in rows}
+
+    for idx, entry in enumerate(data):
+        try:
+            content = entry.get("content", "").strip()
+            if not content:
+                errors.append({"index": idx, "error": "Missing content"})
+                continue
+
+            # Skip duplicates in merge mode
+            if strategy == "merge" and content in existing_contents:
+                skipped += 1
+                continue
+
+            metadata = entry.get("metadata")
+            tags = entry.get("tags", [])
+            created_at = entry.get("created_at")
+
+            # Prepare data
+            prepared_metadata = _prepare_metadata(metadata) if metadata else None
+            validated_tags = _validate_tags(tags)
+            _enforce_tag_whitelist(validated_tags)
+
+            metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
+            tags_json = json.dumps(validated_tags, ensure_ascii=False)
+
+            # Insert with optional created_at preservation
+            if created_at:
+                cur = conn.execute(
+                    "INSERT INTO memories (content, metadata, tags, created_at) VALUES (?, ?, ?, ?)",
+                    (content, metadata_json, tags_json, created_at),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO memories (content, metadata, tags) VALUES (?, ?, ?)",
+                    (content, metadata_json, tags_json),
+                )
+
+            memory_id = cur.lastrowid
+
+            # Update FTS and embeddings
+            _fts_upsert(conn, memory_id, content, metadata_json, tags_json)
+            vector = _compute_embedding(content, prepared_metadata, validated_tags)
+            _upsert_embedding(conn, memory_id, vector)
+
+            imported += 1
+
+        except Exception as exc:
+            errors.append({"index": idx, "error": str(exc)})
+
+    conn.commit()
+
+    # Rebuild cross-references after import
+    if imported > 0:
+        rebuild_crossrefs(conn)
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors[:10],  # Limit error list to first 10
+        "total_errors": len(errors),
+    }
+
+
+def poll_events(
+    conn: sqlite3.Connection,
+    since_timestamp: Optional[str] = None,
+    tags_filter: Optional[List[str]] = None,
+    unconsumed_only: bool = True,
+) -> List[Dict[str, Any]]:
+    """Poll for memory events."""
+    query = "SELECT id, memory_id, tags, timestamp, consumed FROM memories_events WHERE 1=1"
+    params: List[Any] = []
+
+    if unconsumed_only:
+        query += " AND consumed = 0"
+
+    if since_timestamp:
+        query += " AND timestamp > ?"
+        params.append(since_timestamp)
+
+    if tags_filter:
+        # Check if any of the filter tags are in the event's tags JSON array
+        tag_conditions = " OR ".join(["json_extract(tags, '$') LIKE ?" for _ in tags_filter])
+        query += f" AND ({tag_conditions})"
+        for tag in tags_filter:
+            params.append(f'%"{tag}"%')
+
+    query += " ORDER BY timestamp DESC"
+
+    rows = conn.execute(query, params).fetchall()
+
+    events = []
+    for row in rows:
+        events.append({
+            "id": row["id"],
+            "memory_id": row["memory_id"],
+            "tags": json.loads(row["tags"]) if row["tags"] else [],
+            "timestamp": row["timestamp"],
+            "consumed": bool(row["consumed"]),
+        })
+
+    return events
+
+
+def clear_events(conn: sqlite3.Connection, event_ids: List[int]) -> int:
+    """Mark events as consumed."""
+    if not event_ids:
+        return 0
+
+    placeholders = ",".join(["?" for _ in event_ids])
+    conn.execute(
+        f"UPDATE memories_events SET consumed = 1 WHERE id IN ({placeholders})",
+        event_ids
+    )
+    conn.commit()
+    return len(event_ids)
