@@ -75,8 +75,14 @@ def _delete_memory(conn, memory_id: int):
 
 
 @_with_connection
-def _list_memories(conn, query: Optional[str], metadata_filters: Optional[Dict[str, Any]]):
-    return list_memories(conn, query, metadata_filters)
+def _list_memories(
+    conn,
+    query: Optional[str],
+    metadata_filters: Optional[Dict[str, Any]],
+    limit: Optional[int],
+    offset: Optional[int],
+):
+    return list_memories(conn, query, metadata_filters, limit, offset)
 
 
 @_with_connection
@@ -246,13 +252,60 @@ async def memory_create(
 async def memory_list(
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = 0,
 ) -> Dict[str, Any]:
-    """List memories, optionally filtering by substring query or metadata."""
+    """List memories, optionally filtering by substring query or metadata.
+
+    Args:
+        query: Optional text search query
+        metadata_filters: Optional metadata filters
+        limit: Maximum number of results to return (default: unlimited)
+        offset: Number of results to skip (default: 0)
+    """
     try:
-        items = _list_memories(query, metadata_filters)
+        items = _list_memories(query, metadata_filters, limit, offset)
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
     return {"count": len(items), "memories": items}
+
+
+@mcp.tool()
+async def memory_list_compact(
+    query: Optional[str] = None,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = 0,
+) -> Dict[str, Any]:
+    """List memories in compact format (id, preview, tags only) to reduce context usage.
+
+    Returns minimal fields: id, content preview (first 80 chars), tags, and created_at.
+    This tool is useful for browsing memories without loading full content and metadata.
+
+    Args:
+        query: Optional text search query
+        metadata_filters: Optional metadata filters
+        limit: Maximum number of results to return (default: unlimited)
+        offset: Number of results to skip (default: 0)
+    """
+    try:
+        items = _list_memories(query, metadata_filters, limit, offset)
+    except ValueError as exc:
+        return {"error": "invalid_filters", "message": str(exc)}
+
+    # Convert to compact format
+    compact_items = []
+    for item in items:
+        content = item.get("content", "")
+        preview = content[:80] + "..." if len(content) > 80 else content
+        compact_items.append({
+            "id": item["id"],
+            "preview": preview,
+            "tags": item.get("tags", []),
+            "created_at": item.get("created_at"),
+        })
+
+    return {"count": len(compact_items), "memories": compact_items}
 
 
 @mcp.tool()

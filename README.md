@@ -134,6 +134,38 @@ to the free-text `query`. Filters support direct matches on keys such as
 Filters are applied after any text query, so you can combine substring matching
 with structured metadata selection.
 
+### Pagination
+
+Both `memory_list` and `memory_list_compact` support optional `limit` and
+`offset` parameters for paginating large result sets:
+
+```python
+# Get first 10 memories
+memory_list(limit=10)
+
+# Get next 10 memories
+memory_list(limit=10, offset=10)
+
+# Get 5 memories matching a query
+memory_list(query="beamng", limit=5)
+```
+
+### Compact listing
+
+Use `memory_list_compact` to retrieve memories with minimal fields (id, 80-char
+preview, tags, created_at) instead of full content and metadata. This reduces
+context consumption by ~80-90% for browsing operations:
+
+```python
+# Browse recent memories efficiently
+memory_list_compact(limit=20)
+
+# Search with compact results
+memory_list_compact(query="training", metadata_filters={"section": "Plan"})
+```
+
+Once you identify memories of interest, use `memory_get` to retrieve full details.
+
 ### Full-text search
 
 When SQLite is compiled with FTS5 support (default on most platforms), the

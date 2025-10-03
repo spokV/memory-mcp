@@ -744,40 +744,53 @@ def list_memories(
     conn: sqlite3.Connection,
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = 0,
 ) -> List[Dict[str, Any]]:
     validated_filters = _validate_metadata_filters(metadata_filters)
 
     rows: List[sqlite3.Row]
 
+    # Build LIMIT/OFFSET clause
+    limit_clause = ""
+    limit_params = []
+    if limit is not None:
+        limit_clause = " LIMIT ?"
+        limit_params.append(limit)
+        if offset:
+            limit_clause += " OFFSET ?"
+            limit_params.append(offset)
+
     if query and _fts_enabled(conn):
         # Use full-text search when available. Fall back to LIKE if the query fails.
         try:
             rows = conn.execute(
-                """
+                f"""
                 SELECT m.id, m.content, m.metadata, m.tags, m.created_at
                 FROM memories m
                 JOIN memories_fts f ON m.id = f.rowid
                 WHERE f MATCH ?
-                ORDER BY m.created_at DESC
+                ORDER BY m.created_at DESC{limit_clause}
                 """,
-                (query,),
+                (query, *limit_params),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
     elif query:
         pattern = f"%{query}%"
         rows = conn.execute(
-            """
+            f"""
             SELECT id, content, metadata, tags, created_at
             FROM memories
             WHERE content LIKE ? OR tags LIKE ? OR metadata LIKE ?
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC{limit_clause}
             """,
-            (pattern, pattern, pattern),
+            (pattern, pattern, pattern, *limit_params),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT id, content, metadata, tags, created_at FROM memories ORDER BY created_at DESC"
+            f"SELECT id, content, metadata, tags, created_at FROM memories ORDER BY created_at DESC{limit_clause}",
+            tuple(limit_params),
         ).fetchall()
 
     # If the FTS search yielded nothing because of an SQLite error (e.g. malformed query)
@@ -785,13 +798,13 @@ def list_memories(
     if query and _fts_enabled(conn) and not rows:
         pattern = f"%{query}%"
         rows = conn.execute(
-            """
+            f"""
             SELECT id, content, metadata, tags, created_at
             FROM memories
             WHERE content LIKE ? OR tags LIKE ? OR metadata LIKE ?
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC{limit_clause}
             """,
-            (pattern, pattern, pattern),
+            (pattern, pattern, pattern, *limit_params),
         ).fetchall()
 
     records: List[Dict[str, Any]] = []
