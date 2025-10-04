@@ -5,6 +5,7 @@ that persists shared memories in an on-disk SQLite database. The
 `mcp_server.py` entry point exposes a **true MCP server** (via `FastMCP`)
 compatible with the Codex CLI and other MCP-aware clients.
 ## Features
+- **Event Notifications** - Poll-based event system for inter-agent communication via shared-cache tag
 - **Memory Updates** - Edit existing memories without recreating them
 - **Date Range Filtering** - Query memories by creation date with ISO or relative formats (7d, 1m, 1y)
 - **Advanced Tag Queries** - Filter with AND/OR/NOT logic using tags_any, tags_all, tags_none
@@ -365,6 +366,91 @@ memory_rebuild_embeddings()
 ## Cross-reference suggestions
 
 Every time a memory is created or updated, the server computes cosine-similarity against the existing corpus and stores the top matches. Use `memory_related` to retrieve the linked memories (optionally refreshing the links), and `memory_rebuild_crossrefs` to recompute them for the entire database.
+
+## Event Notifications
+
+The event system enables asynchronous communication between agents (like codex-cli and Claude Code) by automatically tracking when memories with specific tags are created or updated.
+
+### How it works
+
+When a memory is created or updated with the `"shared-cache"` tag, an event is automatically written to the `memories_events` database table. Other agents can poll for these events to discover new notifications without constantly querying the memories table.
+
+### Polling for events
+
+Use `memory_events_poll` to check for new events:
+
+```python
+# Poll for all unconsumed events
+events = memory_events_poll()
+
+# Poll for specific tags
+events = memory_events_poll(tags_filter=["shared-cache"])
+
+# Poll for events since a specific time
+events = memory_events_poll(since_timestamp="2025-10-03T10:00:00Z")
+
+# Include already-consumed events
+events = memory_events_poll(unconsumed_only=False)
+```
+
+Returns:
+```python
+{
+  "count": 2,
+  "events": [
+    {
+      "id": 5,
+      "memory_id": 171,
+      "tags": ["shared-cache"],
+      "timestamp": "2025-10-03T17:25:53Z",
+      "consumed": false
+    },
+    ...
+  ]
+}
+```
+
+### Marking events as consumed
+
+After processing events, mark them as consumed to avoid re-processing:
+
+```python
+# Clear specific events
+memory_events_clear(event_ids=[5, 6, 7])
+# Returns: {"cleared": 3}
+```
+
+### Use case: Inter-agent notifications
+
+**Agent 1 (codex-cli) writes a code review:**
+```python
+memory_create(
+    content="Review findings: Bug in LAQ trainer...",
+    tags=["shared-cache"]
+)
+# Event automatically created
+```
+
+**Agent 2 (Claude Code) checks for updates:**
+```python
+# User asks: "check for updates from codex"
+events = memory_events_poll(tags_filter=["shared-cache"])
+
+if events["count"] > 0:
+    for event in events["events"]:
+        memory = memory_get(memory_id=event["memory_id"])
+        # Process the memory...
+
+    # Mark as read
+    event_ids = [e["id"] for e in events["events"]]
+    memory_events_clear(event_ids=event_ids)
+```
+
+**Key points:**
+- Events are **manual polling** - agents must explicitly call `memory_events_poll()`
+- Event emission is **automatic** for memories with the `"shared-cache"` tag
+- Events persist until marked as consumed with `memory_events_clear()`
+- The system is **agent-agnostic** - works with any MCP-compatible tool
 
 ## Tag utilities
 
