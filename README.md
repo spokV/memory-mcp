@@ -51,13 +51,38 @@ MEMORY_MCP_HOST=0.0.0.0
 MEMORY_MCP_PORT=8765
 ```
 
-To enable it in the Codex CLI, add the following to `~/.codex/config.toml` under
+### Automated Service Setup (macOS)
+
+For multi-client workflows, use the automated setup script to run memory-mcp as a persistent service:
+
+```bash
+./setup-memory-mcp-service.sh
+```
+
+This creates a launchd service that:
+- Auto-starts on system boot
+- Runs as a shared HTTP endpoint (one process for all clients)
+- Auto-configures Claude Code and Codex CLI
+- Provides centralized logging and health monitoring
+
+See [`docs/SHARED-SERVICE-SETUP.md`](docs/SHARED-SERVICE-SETUP.md) for detailed documentation.
+
+### Client Configuration
+
+To enable memory-mcp in the Codex CLI, add the following to `~/.codex/config.toml` under
 the `[mcp_servers]` section:
 
+**For stdio mode (default):**
 ```toml
   [mcp_servers.memory]
   command = "memory-mcp-server"
   args = []
+```
+
+**For shared HTTP service:**
+```toml
+  [mcp_servers.memory]
+  url = "http://127.0.0.1:8765/sse"
 ```
 
 > Tip: ensure the `mcp` Python package is available in your environment

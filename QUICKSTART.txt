@@ -1,0 +1,119 @@
+Memory MCP Server - Running Options
+====================================
+
+There are 4 ways to run memory-mcp:
+
+OPTION 1: stdio (Default, per-client)
+--------------------------------------
+Each client spawns its own process:
+
+  memory-mcp-server
+
+Good for: Simple single-client setups
+Used by: Default MCP client configurations
+Pros: Simple, standard MCP pattern
+Cons: Multiple processes if multiple clients
+
+
+OPTION 2: Manual HTTP Server
+-----------------------------
+Run a shared HTTP server manually:
+
+  memory-mcp-server --transport streamable-http --host 127.0.0.1 --port 8765
+
+Or using module invocation:
+
+  python -m memory_mcp --transport streamable-http --host 127.0.0.1 --port 8765
+
+Good for: Testing, temporary shared access
+Pros: Simple one-command setup, shared across clients
+Cons: Stops when terminal closes, manual start each time
+
+
+OPTION 3: Automated Service (This Setup)
+-----------------------------------------
+Run as a system service that auto-starts:
+
+  cd /path/to/memory-mcp
+  chmod +x setup-memory-mcp-service.sh
+  ./setup-memory-mcp-service.sh
+
+What this does:
+- Creates Python virtual environment
+- Installs memory-mcp
+- Sets up macOS service (auto-starts on boot)
+- Auto-configures Claude Code and Codex CLI
+- Runs the HTTP server automatically
+
+Good for: Daily use, multiple clients, set-and-forget
+Pros: Auto-starts on boot, managed service, centralized logs
+Cons: More initial setup (though automated)
+
+
+Then check status:
+  chmod +x check-status.sh
+  ./check-status.sh
+
+
+After Options 2 or 3, Configure Your Clients
+---------------------------------------------
+
+All clients need to point to:
+  http://127.0.0.1:8765/sse
+
+Claude Desktop:
+  Settings → Developer → Edit Config
+  Add: "memory": {"type": "sse", "url": "http://127.0.0.1:8765/sse"}
+
+Claude Code (~/.claude.json):
+  Option 3 does this automatically, or manually add:
+  "memory": {"type": "sse", "url": "http://127.0.0.1:8765/sse"}
+
+Codex CLI (~/.codex/config.toml):
+  Option 3 does this automatically, or manually add:
+  [mcp_servers.memory]
+  url = "http://127.0.0.1:8765/sse"
+
+Cursor/VSCode:
+  Add to settings:
+  "claude.mcpServers": {"memory": {"type": "sse", "url": "http://127.0.0.1:8765/sse"}}
+
+
+Comparison Table
+----------------
+
+| Method | Clients | Auto-start | Complexity | Best For |
+|--------|---------|------------|------------|----------|
+| Option 1 (stdio) | Each spawns own | N/A | Simple | Single client |
+| Option 2 (manual HTTP) | Share one process | No | Simple | Testing |
+| Option 3 (service) | Share one process | Yes | Medium | Daily use |
+
+
+Testing
+-------
+After setup (any option), test from any client:
+  "Create a memory: test message, tags: test"
+  "List all my memories"
+
+If using Options 2 or 3, the same memory appears in all clients! 🎉
+
+
+Quick Reference - Service Management (Option 3)
+------------------------------------------------
+Status:   ./check-status.sh
+Stop:     launchctl unload ~/Library/LaunchAgents/com.memory-mcp.plist
+Start:    launchctl load ~/Library/LaunchAgents/com.memory-mcp.plist
+Restart:  launchctl kickstart -k gui/$(id -u)/com.memory-mcp
+Logs:     tail -f ~/.mcp/memory-mcp/logs/memory-mcp.log
+
+
+Environment Variables (Options 2 & 3)
+--------------------------------------
+You can also configure via environment:
+
+  MEMORY_MCP_TRANSPORT=streamable-http
+  MEMORY_MCP_HOST=127.0.0.1
+  MEMORY_MCP_PORT=8765
+  memory-mcp-server
+
+Or for Option 3, edit ~/Library/LaunchAgents/com.memory-mcp.plist
