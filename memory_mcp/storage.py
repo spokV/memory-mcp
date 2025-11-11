@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence as TypingSequence
 
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "memories.db"
+# Allow custom database location via environment variable
+_db_path_env = os.getenv("MEMORY_MCP_DB_PATH")
+DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
 
 # Embedding backend configuration
 EMBEDDING_MODEL = os.getenv("MEMORY_MCP_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
