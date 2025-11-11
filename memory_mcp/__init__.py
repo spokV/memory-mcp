@@ -19,7 +19,14 @@ DEFAULT_TAGS = {
 
 
 def _load_tag_whitelist() -> set[str]:
-    """Load tag allowlist from env or file (fallback to defaults)."""
+    """Load tag allowlist from env or file (fallback to defaults).
+
+    Set MEMORY_MCP_ALLOW_ANY_TAG=1 to disable tag restrictions entirely.
+    """
+
+    # Check if tag restrictions should be disabled
+    if os.getenv("MEMORY_MCP_ALLOW_ANY_TAG") == "1":
+        return set()  # Empty set disables validation
 
     file_path = os.getenv("MEMORY_MCP_TAG_FILE")
     env_list = os.getenv("MEMORY_MCP_TAGS")
