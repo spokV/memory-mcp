@@ -62,3 +62,20 @@ memory-mcp-server
 # HTTP endpoint
 memory-mcp-server --transport streamable-http --host 127.0.0.1 --port 8765
 ```
+
+### Claude Code Config
+Add to `mcp.json`:
+```
+{
+  "mcpServers": {
+    "memory": {
+      "command": "/home/spok/miniconda/bin/memory-mcp-server",
+      "args": [],
+      "env": {
+        "MEMORY_MCP_DB_PATH": "/home/spok/.local/share/memory-mcp/memories.db",
+        "MEMORY_MCP_ALLOW_ANY_TAG": "1"
+      }
+    }
+  }
+}
+```
