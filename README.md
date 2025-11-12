@@ -69,10 +69,10 @@ Add to `mcp.json`:
 {
   "mcpServers": {
     "memory": {
-      "command": "/home/spok/miniconda/bin/memory-mcp-server",
+      "command": "{$HOME}/miniconda/bin/memory-mcp-server",
       "args": [],
       "env": {
-        "MEMORY_MCP_DB_PATH": "/home/spok/.local/share/memory-mcp/memories.db",
+        "MEMORY_MCP_DB_PATH": "{$HOME}/.local/share/memory-mcp/memories.db",
         "MEMORY_MCP_ALLOW_ANY_TAG": "1"
       }
     }
