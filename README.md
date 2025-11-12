@@ -17,41 +17,18 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 ## Install
 
 ```bash
-# Basic installation
-pip install -e .mcp/src/memory-mcp
+# From GitHub
+pip install git+https://github.com/spokV/memory-mcp.git
 
-# With cloud storage support (S3, GCS, Azure)
-pip install -e ".mcp/src/memory-mcp[cloud]"
+# For cloud storage (S3/R2/GCS/Azure), install boto3 separately
+pip install boto3
 
-# With all optional features
-pip install -e ".mcp/src/memory-mcp[all]"
+# Or from local clone with extras
+pip install -e ".mcp/src/memory-mcp[cloud]"  # includes boto3
+pip install -e ".mcp/src/memory-mcp[all]"    # includes cloud + dev tools
 ```
 
-### Configure for Claude Code
-
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.memory]
-command = "memory-mcp-server"
-args = []
-```
-
-### Optional: Cloud Storage
-
-Enable cloud sync with environment variables:
-
-```bash
-# AWS S3
-export MEMORY_MCP_STORAGE_URI="s3://my-bucket/memories.db"
-export AWS_ACCESS_KEY_ID="your-key"
-export AWS_SECRET_ACCESS_KEY="your-secret"
-
-# Local file (default: .mcp/memory-mcp/memory_mcp/memories.db)
-export MEMORY_MCP_STORAGE_URI="file:///path/to/memories.db"
-```
-
-### Usage
+## Usage
 
 The server runs automatically when configured in Claude Code. Manual invocation:
 
@@ -63,10 +40,12 @@ memory-mcp-server
 memory-mcp-server --transport streamable-http --host 127.0.0.1 --port 8765
 ```
 
-### Claude Code Config
-Add to `mcp.json`:
-## Local DB
-```
+## Claude Code Config
+
+Add to `.mcp.json` in your project root:
+
+### Local DB
+```json
 {
   "mcpServers": {
     "memory": {
@@ -80,8 +59,9 @@ Add to `mcp.json`:
   }
 }
 ```
-## Cloud DB
-```
+
+### Cloud DB (S3/R2)
+```json
 {
   "mcpServers": {
     "memory": {
@@ -93,6 +73,6 @@ Add to `mcp.json`:
         "MEMORY_MCP_CLOUD_ENCRYPT": "true",
         "MEMORY_MCP_ALLOW_ANY_TAG": "1"
       }
-    },
-  },
+    }
+  }
 }
