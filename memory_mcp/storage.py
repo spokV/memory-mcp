@@ -12,10 +12,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence as TypingSequence
 
+from .backends import StorageBackend, parse_backend_uri
+
 ROOT = Path(__file__).resolve().parent
-# Allow custom database location via environment variable
-_db_path_env = os.getenv("MEMORY_MCP_DB_PATH")
-DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
+
+# Storage backend configuration
+# Priority: MEMORY_MCP_STORAGE_URI > MEMORY_MCP_DB_PATH (legacy) > default
+_storage_uri = os.getenv("MEMORY_MCP_STORAGE_URI")
+if _storage_uri:
+    # New URI-based configuration (supports s3://, file://, etc.)
+    STORAGE_BACKEND = parse_backend_uri(_storage_uri)
+else:
+    # Legacy: Use MEMORY_MCP_DB_PATH or default local path
+    _db_path_env = os.getenv("MEMORY_MCP_DB_PATH")
+    DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
+    from .backends import LocalSQLiteBackend
+    STORAGE_BACKEND = LocalSQLiteBackend(DB_PATH)
 
 # Embedding backend configuration
 EMBEDDING_MODEL = os.getenv("MEMORY_MCP_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
@@ -40,10 +52,37 @@ def _emit_event(conn: sqlite3.Connection, memory_id: int, tags: List[str]) -> No
 
 
 def connect(*, check_same_thread: bool = True) -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=check_same_thread)
-    conn.row_factory = sqlite3.Row
+    """Create a database connection using the configured storage backend.
+
+    For cloud backends, this will automatically sync from cloud before use.
+
+    Args:
+        check_same_thread: SQLite connection parameter
+
+    Returns:
+        sqlite3.Connection ready for use
+    """
+    conn = STORAGE_BACKEND.connect(check_same_thread=check_same_thread)
     ensure_schema(conn)
     return conn
+
+
+def sync_to_cloud() -> None:
+    """Sync database to cloud storage if using a cloud backend.
+
+    This should be called after write operations to ensure changes are
+    persisted to cloud storage.
+    """
+    STORAGE_BACKEND.sync_after_write()
+
+
+def get_backend_info() -> dict:
+    """Get information about the current storage backend.
+
+    Returns:
+        Dictionary with backend type, configuration, and status
+    """
+    return STORAGE_BACKEND.get_info()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

@@ -18,6 +18,7 @@ from .storage import (
     delete_memories,
     export_memories,
     find_invalid_tag_entries,
+    get_backend_info,
     get_crossrefs,
     get_memory,
     get_statistics,
@@ -27,6 +28,7 @@ from .storage import (
     rebuild_embeddings,
     rebuild_crossrefs,
     semantic_search,
+    sync_to_cloud,
     update_crossrefs,
     update_memory,
 )
@@ -49,18 +51,39 @@ DEFAULT_PORT = _read_int_env("MEMORY_MCP_PORT", 8000)
 mcp = FastMCP("Memory MCP Server", host=DEFAULT_HOST, port=DEFAULT_PORT)
 
 
-def _with_connection(func):
-    def wrapper(*args, **kwargs):
-        conn = connect()
-        try:
-            return func(conn, *args, **kwargs)
-        finally:
-            conn.close()
+def _with_connection(func=None, *, writes=False):
+    """Decorator that manages database connections and cloud sync.
 
-    return wrapper
+    Opens a connection, runs the function, closes the connection,
+    and syncs to cloud storage only after write operations.
+
+    Args:
+        writes: If True, syncs to cloud after operation. If False, skips sync (read-only).
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            conn = connect()
+            try:
+                result = func(conn, *args, **kwargs)
+                # Only sync to cloud after write operations
+                if writes:
+                    sync_to_cloud()
+                return result
+            finally:
+                conn.close()
+
+        return wrapper
+
+    # Allow using as @_with_connection or @_with_connection(writes=True)
+    if func is not None:
+        # Called as @_with_connection (default: read-only, no sync)
+        return decorator(func)
+    else:
+        # Called as @_with_connection(writes=True)
+        return decorator
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _create_memory(
     conn,
     content: str,
@@ -75,7 +98,7 @@ def _get_memory(conn, memory_id: int):
     return get_memory(conn, memory_id)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _update_memory(
     conn,
     memory_id: int,
@@ -86,7 +109,7 @@ def _update_memory(
     return update_memory(conn, memory_id, content=content, metadata=metadata, tags=tags)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _delete_memory(conn, memory_id: int):
     return delete_memory(conn, memory_id)
 
@@ -107,12 +130,12 @@ def _list_memories(
     return list_memories(conn, query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _create_memories(conn, entries: List[Dict[str, Any]]):
     return add_memories(conn, entries)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _delete_memories(conn, ids: List[int]):
     return delete_memories(conn, ids)
 
@@ -129,7 +152,7 @@ def _find_invalid_tags(conn):
     return find_invalid_tag_entries(conn, TAG_WHITELIST)
 
 
-@_with_connection
+@_with_connection(writes=True)  # May write crossrefs if refresh=True
 def _get_related(conn, memory_id: int, refresh: bool) -> List[Dict[str, Any]]:
     if refresh:
         update_crossrefs(conn, memory_id)
@@ -140,7 +163,7 @@ def _get_related(conn, memory_id: int, refresh: bool) -> List[Dict[str, Any]]:
     return refs
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _rebuild_crossrefs(conn):
     return rebuild_crossrefs(conn)
 
@@ -162,7 +185,7 @@ def _semantic_search(
     )
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _rebuild_embeddings(conn):
     return rebuild_embeddings(conn)
 
@@ -177,7 +200,7 @@ def _export_memories(conn):
     return export_memories(conn)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _import_memories(conn, data: List[Dict[str, Any]], strategy: str):
     return import_memories(conn, data, strategy)
 
@@ -558,7 +581,7 @@ def _poll_events(
     return poll_events(conn, since_timestamp, tags_filter, unconsumed_only)
 
 
-@_with_connection
+@_with_connection(writes=True)
 def _clear_events(conn, event_ids: List[int]):
     return clear_events(conn, event_ids)
 
@@ -598,7 +621,10 @@ async def memory_events_clear(event_ids: List[int]) -> Dict[str, Any]:
 
 
 def main(argv: Optional[list[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Run the memory MCP server")
+    parser = argparse.ArgumentParser(description="Memory MCP Server")
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Default: start server (make it the default if no subcommand)
     parser.add_argument(
         "--transport",
         choices=sorted(VALID_TRANSPORTS),
@@ -616,11 +642,138 @@ def main(argv: Optional[list[str]] = None) -> None:
         default=DEFAULT_PORT,
         help="Port for HTTP transports (defaults to env MEMORY_MCP_PORT or 8000)",
     )
+
+    # Subcommand: sync-pull
+    sync_pull_parser = subparsers.add_parser(
+        "sync-pull",
+        help="Force pull database from cloud storage (ignore local cache)"
+    )
+
+    # Subcommand: sync-push
+    sync_push_parser = subparsers.add_parser(
+        "sync-push",
+        help="Force push database to cloud storage"
+    )
+
+    # Subcommand: sync-status
+    sync_status_parser = subparsers.add_parser(
+        "sync-status",
+        help="Show sync status and backend information"
+    )
+
+    # Subcommand: info
+    info_parser = subparsers.add_parser(
+        "info",
+        help="Show storage backend information"
+    )
+
     args = parser.parse_args(argv)
 
-    mcp.settings.host = args.host
-    mcp.settings.port = args.port
-    mcp.run(transport=args.transport)
+    # Handle subcommands
+    if args.command == "sync-pull":
+        _handle_sync_pull()
+    elif args.command == "sync-push":
+        _handle_sync_push()
+    elif args.command == "sync-status":
+        _handle_sync_status()
+    elif args.command == "info":
+        _handle_info()
+    else:
+        # Default: start server
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.run(transport=args.transport)
+
+
+def _handle_sync_pull() -> None:
+    """Handle sync-pull command."""
+    import json
+    from .backends import CloudSQLiteBackend
+    from .storage import STORAGE_BACKEND
+
+    if not isinstance(STORAGE_BACKEND, CloudSQLiteBackend):
+        print("Error: sync-pull only works with cloud storage backends")
+        print(f"Current backend: {STORAGE_BACKEND.__class__.__name__}")
+        exit(1)
+
+    print(f"Pulling database from {STORAGE_BACKEND.cloud_url}...")
+    try:
+        STORAGE_BACKEND.force_sync_pull()
+        info = STORAGE_BACKEND.get_info()
+        print("✓ Sync completed successfully")
+        print(f"  Cache path: {info['cache_path']}")
+        print(f"  Size: {info['cache_size_bytes'] / 1024 / 1024:.2f} MB")
+        print(f"  Last sync: {info.get('last_sync', 'N/A')}")
+    except Exception as e:
+        print(f"✗ Sync failed: {e}")
+        exit(1)
+
+
+def _handle_sync_push() -> None:
+    """Handle sync-push command."""
+    import json
+    from .backends import CloudSQLiteBackend
+    from .storage import STORAGE_BACKEND
+
+    if not isinstance(STORAGE_BACKEND, CloudSQLiteBackend):
+        print("Error: sync-push only works with cloud storage backends")
+        print(f"Current backend: {STORAGE_BACKEND.__class__.__name__}")
+        exit(1)
+
+    print(f"Pushing database to {STORAGE_BACKEND.cloud_url}...")
+    try:
+        STORAGE_BACKEND.force_sync_push()
+        info = STORAGE_BACKEND.get_info()
+        print("✓ Push completed successfully")
+        print(f"  Cloud URL: {info['cloud_url']}")
+        print(f"  Size: {info['cache_size_bytes'] / 1024 / 1024:.2f} MB")
+        print(f"  Last sync: {info.get('last_sync', 'N/A')}")
+    except Exception as e:
+        print(f"✗ Push failed: {e}")
+        exit(1)
+
+
+def _handle_sync_status() -> None:
+    """Handle sync-status command."""
+    import json
+    from .backends import CloudSQLiteBackend
+    from .storage import STORAGE_BACKEND
+
+    info = STORAGE_BACKEND.get_info()
+    backend_type = info.get('backend_type', 'unknown')
+
+    print(f"Storage Backend: {backend_type}")
+    print()
+
+    if backend_type == "cloud_sqlite":
+        print(f"Cloud URL: {info.get('cloud_url', 'N/A')}")
+        print(f"Bucket: {info.get('bucket', 'N/A')}")
+        print(f"Key: {info.get('key', 'N/A')}")
+        print()
+        print(f"Cache Path: {info.get('cache_path', 'N/A')}")
+        print(f"Cache Exists: {info.get('cache_exists', False)}")
+        print(f"Cache Size: {info.get('cache_size_bytes', 0) / 1024 / 1024:.2f} MB")
+        print()
+        print(f"Is Dirty: {info.get('is_dirty', False)}")
+        print(f"Last ETag: {info.get('last_etag', 'N/A')}")
+        print(f"Last Sync: {info.get('last_sync', 'N/A')}")
+        print(f"Auto Sync: {info.get('auto_sync', True)}")
+        print(f"Encryption: {info.get('encrypt', False)}")
+    elif backend_type == "local_sqlite":
+        print(f"Database Path: {info.get('db_path', 'N/A')}")
+        print(f"Exists: {info.get('exists', False)}")
+        print(f"Size: {info.get('size_bytes', 0) / 1024 / 1024:.2f} MB")
+    else:
+        print(json.dumps(info, indent=2))
+
+
+def _handle_info() -> None:
+    """Handle info command."""
+    import json
+    from .storage import STORAGE_BACKEND
+
+    info = STORAGE_BACKEND.get_info()
+    print(json.dumps(info, indent=2, default=str))
 
 
 if __name__ == "__main__":
