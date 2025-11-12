@@ -65,6 +65,7 @@ memory-mcp-server --transport streamable-http --host 127.0.0.1 --port 8765
 
 ### Claude Code Config
 Add to `mcp.json`:
+## Local DB
 ```
 {
   "mcpServers": {
@@ -79,3 +80,19 @@ Add to `mcp.json`:
   }
 }
 ```
+## Cloud DB
+```
+{
+  "mcpServers": {
+    "memory": {
+      "command": "/opt/conda/bin/memory-mcp-server",
+      "args": [],
+      "env": {
+        "AWS_ENDPOINT_URL": "https://xxxxxxx.r2.cloudflarestorage.com",
+        "MEMORY_MCP_STORAGE_URI": "s3://memories/memories.db",
+        "MEMORY_MCP_CLOUD_ENCRYPT": "true",
+        "MEMORY_MCP_ALLOW_ANY_TAG": "1"
+      }
+    },
+  },
+}
