@@ -266,7 +266,9 @@ def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = F
         path = _extract_hierarchy_path(memory.get("metadata"))
         node = root
         if not path:
-            node["memories"].append(memory)
+            memory_with_path = dict(memory)
+            memory_with_path["hierarchy_path"] = node["path"]
+            node["memories"].append(memory_with_path)
             continue
 
         for part in path:
@@ -279,7 +281,9 @@ def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = F
                     "children": {},
                 }
             node = children[part]
-        node["memories"].append(memory)
+        memory_with_path = dict(memory)
+        memory_with_path["hierarchy_path"] = node["path"]
+        node["memories"].append(memory_with_path)
 
     def collapse(node: Dict[str, Any]) -> Dict[str, Any]:
         children_map: Dict[str, Any] = node.get("children", {})
