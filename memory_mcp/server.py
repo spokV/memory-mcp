@@ -680,6 +680,158 @@ async def memory_export() -> Dict[str, Any]:
     return {"count": len(memories), "memories": memories}
 
 
+@_with_connection
+def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, Any]:
+    """Generate HTML knowledge graph visualization."""
+    import json as json_lib
+    from .storage import list_memories, get_crossrefs, rebuild_crossrefs
+
+    memories = list_memories(conn, None, None, None, 0, None, None, None, None, None)
+    if not memories:
+        return {"error": "no_memories", "message": "No memories to visualize"}
+
+    rebuild_crossrefs(conn)
+
+    colors = ["#58a6ff", "#f78166", "#a371f7", "#7ee787", "#ffa657", "#ff7b72", "#79c0ff", "#d2a8ff"]
+    tag_colors = {}
+
+    nodes = []
+    memories_data = {}
+    for m in memories:
+        tags = m.get("tags", [])
+        primary_tag = tags[0] if tags else "untagged"
+        if primary_tag not in tag_colors:
+            tag_colors[primary_tag] = colors[len(tag_colors) % len(colors)]
+
+        content = m["content"]
+        label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
+
+        nodes.append({
+            "id": m["id"],
+            "label": label + "..." if len(content) > 35 else label,
+            "color": tag_colors[primary_tag],
+        })
+
+        memories_data[m["id"]] = {
+            "id": m["id"],
+            "tags": tags,
+            "created": m.get("created_at", ""),
+            "content": content
+        }
+
+    edges = []
+    seen = set()
+    for m in memories:
+        for ref in get_crossrefs(conn, m["id"]):
+            edge_key = tuple(sorted([m["id"], ref["id"]]))
+            if edge_key not in seen and ref.get("score", 0) > min_score:
+                seen.add(edge_key)
+                edges.append({"from": m["id"], "to": ref["id"]})
+
+    legend_html = "".join(
+        f'<div class="legend-item"><span class="legend-color" style="background:{c}"></span>{t}</div>'
+        for t, c in list(tag_colors.items())[:12]
+    )
+
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Memory Knowledge Graph</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; }}
+        #graph {{ flex: 1; height: 100%; }}
+        #panel {{ width: 400px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }}
+        #panel.active {{ display: block; }}
+        #panel h2 {{ color: #58a6ff; margin-bottom: 10px; font-size: 16px; }}
+        #panel .tags {{ margin-bottom: 15px; }}
+        #panel .tag {{ display: inline-block; background: #30363d; padding: 3px 8px; border-radius: 12px; font-size: 12px; margin: 2px; }}
+        #panel .meta {{ color: #8b949e; font-size: 12px; margin-bottom: 15px; }}
+        #panel .content {{ white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: #0d1117; padding: 15px; border-radius: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }}
+        #panel .close {{ position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }}
+        #panel .close:hover {{ color: #fff; }}
+        #legend {{ position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }}
+        .legend-item {{ margin: 4px 0; display: flex; align-items: center; }}
+        .legend-color {{ width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }}
+        #help {{ position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }}
+    </style>
+</head>
+<body>
+    <div id="graph"></div>
+    <div id="panel">
+        <span class="close" onclick="closePanel()">&times;</span>
+        <h2 id="panel-title">Memory #</h2>
+        <div class="meta" id="panel-meta"></div>
+        <div class="tags" id="panel-tags"></div>
+        <div class="content" id="panel-content"></div>
+    </div>
+    <div id="legend"><b>Tags</b>{legend_html}</div>
+    <div id="help">Click node to view | Scroll to zoom | Drag to pan</div>
+    <script>
+        var memoriesData = {json_lib.dumps(memories_data)};
+        var nodes = new vis.DataSet({json_lib.dumps(nodes)});
+        var edges = new vis.DataSet({json_lib.dumps(edges)});
+        var container = document.getElementById("graph");
+        var data = {{ nodes: nodes, edges: edges }};
+        var options = {{
+            nodes: {{ shape: "dot", size: 16, font: {{ color: "#c9d1d9", size: 11 }}, borderWidth: 2 }},
+            edges: {{ color: {{ color: "#30363d", opacity: 0.6 }}, smooth: {{ type: "continuous" }} }},
+            physics: {{ barnesHut: {{ gravitationalConstant: -2500, springLength: 120, damping: 0.3 }} }},
+            interaction: {{ hover: true, tooltipDelay: 100 }}
+        }};
+        var network = new vis.Network(container, data, options);
+        network.on("click", function(params) {{
+            if (params.nodes.length > 0) {{
+                var nodeId = params.nodes[0];
+                var mem = memoriesData[nodeId];
+                if (mem) {{
+                    document.getElementById("panel-title").textContent = "Memory #" + mem.id;
+                    document.getElementById("panel-meta").textContent = "Created: " + mem.created;
+                    document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag">' + t + '</span>').join("");
+                    document.getElementById("panel-content").textContent = mem.content;
+                    document.getElementById("panel").classList.add("active");
+                }}
+            }}
+        }});
+        function closePanel() {{ document.getElementById("panel").classList.remove("active"); }}
+    </script>
+</body>
+</html>'''
+
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    return {
+        "path": output_path,
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "tags": list(tag_colors.keys()),
+    }
+
+
+@mcp.tool()
+async def memory_export_graph(
+    output_path: Optional[str] = None,
+    min_score: float = 0.25,
+) -> Dict[str, Any]:
+    """Export memories as interactive HTML knowledge graph.
+
+    Args:
+        output_path: Path to save HTML file (default: ~/memories_graph.html)
+        min_score: Minimum similarity score for edges (default: 0.25)
+
+    Returns:
+        Dictionary with path, node count, edge count, and tags
+    """
+    import os
+    if output_path is None:
+        output_path = os.path.expanduser("~/memories_graph.html")
+
+    return _export_graph_html(output_path, min_score)
+
+
 @mcp.tool()
 async def memory_import(
     data: List[Dict[str, Any]],
