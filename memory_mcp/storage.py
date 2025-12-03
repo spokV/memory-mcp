@@ -102,6 +102,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_embeddings_table(conn)
     _ensure_crossrefs_table(conn)
     _ensure_events_table(conn)
+    _ensure_importance_columns(conn)
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
@@ -157,6 +158,24 @@ def _ensure_events_table(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.commit()
+
+
+def _ensure_importance_columns(conn: sqlite3.Connection) -> None:
+    """Add importance scoring columns to memories table if they don't exist."""
+    # Check if columns already exist
+    cursor = conn.execute("PRAGMA table_info(memories)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    if "importance" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN importance REAL DEFAULT 1.0")
+
+    if "last_accessed" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN last_accessed TEXT")
+
+    if "access_count" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0")
+
     conn.commit()
 
 
@@ -411,13 +430,30 @@ def _fts_delete(conn: sqlite3.Connection, memory_id: int) -> None:
 def _serialise_row(row: sqlite3.Row) -> Dict[str, Any]:
     metadata = row["metadata"]
     tags = row["tags"]
-    return {
+    result = {
         "id": row["id"],
         "content": row["content"],
         "metadata": _present_metadata(json.loads(metadata)) if metadata else None,
         "tags": json.loads(tags) if tags else [],
         "created_at": row["created_at"],
     }
+
+    # Add importance fields if available (may not exist in older schemas during migration)
+    row_keys = row.keys() if hasattr(row, 'keys') else []
+    if "importance" in row_keys:
+        base_importance = row["importance"] if row["importance"] is not None else 1.0
+        access_count = row["access_count"] if "access_count" in row_keys and row["access_count"] is not None else 0
+        result["importance"] = base_importance
+        result["access_count"] = access_count
+        result["last_accessed"] = row["last_accessed"] if "last_accessed" in row_keys else None
+        # Calculate current importance score with decay
+        result["importance_score"] = calculate_importance(
+            row["created_at"],
+            base_importance,
+            access_count,
+        )
+
+    return result
 
 
 def _validate_tags(tags: Optional[Iterable[str]]) -> List[str]:
@@ -870,13 +906,34 @@ def add_memories(
     return [get_memory(conn, memory_id) for memory_id in inserted]
 
 
-def get_memory(conn: sqlite3.Connection, memory_id: int) -> Optional[Dict[str, Any]]:
+def get_memory(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    track_access: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Retrieve a single memory by ID.
+
+    Args:
+        conn: Database connection
+        memory_id: ID of memory to retrieve
+        track_access: If True, increment access count and update last_accessed
+
+    Returns:
+        Memory dict or None if not found
+    """
     row = conn.execute(
-        "SELECT id, content, metadata, tags, created_at FROM memories WHERE id = ?",
+        """SELECT id, content, metadata, tags, created_at,
+                  importance, last_accessed, access_count
+           FROM memories WHERE id = ?""",
         (memory_id,),
     ).fetchone()
     if not row:
         return None
+
+    if track_access:
+        _track_access(conn, memory_id)
+        conn.commit()
+
     record = _serialise_row(row)
     record["related"] = get_crossrefs(conn, memory_id)
     return record
@@ -1000,6 +1057,7 @@ def list_memories(
     tags_any: Optional[List[str]] = None,
     tags_all: Optional[List[str]] = None,
     tags_none: Optional[List[str]] = None,
+    sort_by_importance: bool = False,
 ) -> List[Dict[str, Any]]:
     validated_filters = _validate_metadata_filters(metadata_filters)
 
@@ -1033,16 +1091,24 @@ def list_memories(
             limit_clause += " OFFSET ?"
             limit_params.append(offset)
 
+    # Column list including importance fields
+    cols_fts = "m.id, m.content, m.metadata, m.tags, m.created_at, m.importance, m.last_accessed, m.access_count"
+    cols_plain = "id, content, metadata, tags, created_at, importance, last_accessed, access_count"
+
+    # Order clause - use importance_score calculation or created_at
+    order_fts = "m.created_at DESC"
+    order_plain = "created_at DESC"
+
     if query and _fts_enabled(conn):
         # Use full-text search when available. Fall back to LIKE if the query fails.
         try:
             rows = conn.execute(
                 f"""
-                SELECT m.id, m.content, m.metadata, m.tags, m.created_at
+                SELECT {cols_fts}
                 FROM memories m
                 JOIN memories_fts f ON m.id = f.rowid
                 WHERE f MATCH ?{date_clause_fts}
-                ORDER BY m.created_at DESC{limit_clause}
+                ORDER BY {order_fts}{limit_clause}
                 """,
                 (query, *date_params, *limit_params),
             ).fetchall()
@@ -1052,17 +1118,17 @@ def list_memories(
         pattern = f"%{query}%"
         rows = conn.execute(
             f"""
-            SELECT id, content, metadata, tags, created_at
+            SELECT {cols_plain}
             FROM memories
             WHERE (content LIKE ? OR tags LIKE ? OR metadata LIKE ?){date_clause_plain}
-            ORDER BY created_at DESC{limit_clause}
+            ORDER BY {order_plain}{limit_clause}
             """,
             (pattern, pattern, pattern, *date_params, *limit_params),
         ).fetchall()
     else:
         where_clause = " WHERE 1=1" + date_clause_plain if date_clause_plain else ""
         rows = conn.execute(
-            f"SELECT id, content, metadata, tags, created_at FROM memories{where_clause} ORDER BY created_at DESC{limit_clause}",
+            f"SELECT {cols_plain} FROM memories{where_clause} ORDER BY {order_plain}{limit_clause}",
             tuple([*date_params, *limit_params]),
         ).fetchall()
 
@@ -1072,10 +1138,10 @@ def list_memories(
         pattern = f"%{query}%"
         rows = conn.execute(
             f"""
-            SELECT id, content, metadata, tags, created_at
+            SELECT {cols_plain}
             FROM memories
             WHERE (content LIKE ? OR tags LIKE ? OR metadata LIKE ?){date_clause_plain}
-            ORDER BY created_at DESC{limit_clause}
+            ORDER BY {order_plain}{limit_clause}
             """,
             (pattern, pattern, pattern, *date_params, *limit_params),
         ).fetchall()
@@ -1105,6 +1171,10 @@ def list_memories(
                 continue
 
         records.append(record)
+
+    # Sort by importance score if requested
+    if sort_by_importance:
+        records.sort(key=lambda r: r.get("importance_score", 0.0), reverse=True)
 
     return records
 
@@ -1182,6 +1252,113 @@ def semantic_search(
     )
 
 
+def hybrid_search(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    semantic_weight: float = 0.6,
+    top_k: int = 10,
+    min_score: float = 0.0,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Combine FTS keyword search and semantic vector search using Reciprocal Rank Fusion.
+
+    Args:
+        conn: Database connection
+        query: Search query text
+        semantic_weight: Weight for semantic results (0-1). Keyword weight = 1 - semantic_weight.
+        top_k: Maximum number of results to return
+        min_score: Minimum combined score threshold
+        metadata_filters: Optional metadata filters
+        date_from: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        date_to: Optional date filter
+        tags_any: Match memories with ANY of these tags
+        tags_all: Match memories with ALL of these tags
+        tags_none: Exclude memories with ANY of these tags
+
+    Returns:
+        List of memories with combined scores, sorted by relevance
+    """
+    if not query or not query.strip():
+        return []
+
+    # Clamp semantic_weight to valid range
+    semantic_weight = max(0.0, min(1.0, semantic_weight))
+    keyword_weight = 1.0 - semantic_weight
+
+    # 1. Get semantic search results (fetch more than top_k for better fusion)
+    semantic_results = semantic_search(
+        conn,
+        query,
+        metadata_filters=metadata_filters,
+        top_k=top_k * 3,
+        min_score=None,  # Get all results, filter after fusion
+    )
+
+    # 2. Get keyword search results
+    keyword_results = list_memories(
+        conn,
+        query=query,
+        metadata_filters=metadata_filters,
+        limit=top_k * 3,
+        offset=0,
+        date_from=date_from,
+        date_to=date_to,
+        tags_any=tags_any,
+        tags_all=tags_all,
+        tags_none=tags_none,
+    )
+
+    # 3. Apply Reciprocal Rank Fusion (RRF)
+    # RRF score = sum(1 / (k + rank)) where k is a constant (typically 60)
+    rrf_k = 60
+    scores: Dict[int, float] = {}
+    memories_by_id: Dict[int, Dict[str, Any]] = {}
+
+    # Score semantic results
+    for rank, result in enumerate(semantic_results):
+        memory = result.get("memory", result)
+        memory_id = memory["id"]
+        memories_by_id[memory_id] = memory
+        semantic_score = result.get("score", 0.0)
+        # Combine RRF with original semantic score for better ranking
+        rrf_contribution = semantic_weight / (rrf_k + rank)
+        score_boost = semantic_weight * semantic_score * 0.1  # Small boost from actual similarity
+        scores[memory_id] = scores.get(memory_id, 0) + rrf_contribution + score_boost
+
+    # Score keyword results
+    for rank, memory in enumerate(keyword_results):
+        memory_id = memory["id"]
+        memories_by_id[memory_id] = memory
+        rrf_contribution = keyword_weight / (rrf_k + rank)
+        scores[memory_id] = scores.get(memory_id, 0) + rrf_contribution
+
+    # 4. Sort by combined score and apply filters
+    sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+
+    results: List[Dict[str, Any]] = []
+    for memory_id in sorted_ids:
+        if len(results) >= top_k:
+            break
+
+        score = scores[memory_id]
+        if score < min_score:
+            continue
+
+        memory = memories_by_id[memory_id]
+        results.append({
+            "score": round(score, 4),
+            "memory": memory,
+        })
+
+    return results
+
+
 def rebuild_embeddings(conn: sqlite3.Connection) -> int:
     rows = conn.execute(
         "SELECT id, content, metadata, tags FROM memories"
@@ -1196,6 +1373,103 @@ def rebuild_embeddings(conn: sqlite3.Connection) -> int:
         updated += 1
     conn.commit()
     return updated
+
+
+def calculate_importance(
+    created_at: str,
+    base_importance: float = 1.0,
+    access_count: int = 0,
+    half_life_days: int = 30,
+) -> float:
+    """Calculate importance score with time decay and access boost.
+
+    Score = base_importance * recency_factor * access_factor
+
+    Args:
+        created_at: ISO datetime string of when memory was created
+        base_importance: Base importance value (default 1.0)
+        access_count: Number of times memory has been accessed
+        half_life_days: Days until importance decays to half (default 30)
+
+    Returns:
+        Calculated importance score
+    """
+    base = base_importance if base_importance is not None else 1.0
+
+    # Recency decay (exponential, half-life = half_life_days)
+    try:
+        # Handle datetime with or without timezone/microseconds
+        created_str = created_at.replace('Z', '+00:00') if created_at else None
+        if created_str:
+            # Try parsing as full datetime first
+            try:
+                created = datetime.fromisoformat(created_str)
+            except ValueError:
+                # Try simpler format
+                created = datetime.strptime(created_str[:19], '%Y-%m-%d %H:%M:%S')
+            age_days = (datetime.now() - created.replace(tzinfo=None)).days
+            recency = 0.5 ** (age_days / half_life_days) if age_days >= 0 else 1.0
+        else:
+            recency = 1.0
+    except (ValueError, TypeError):
+        recency = 1.0
+
+    # Access boost (logarithmic to prevent runaway scores)
+    access = access_count if access_count is not None else 0
+    access_factor = 1 + math.log(access + 1) * 0.1
+
+    return round(base * recency * access_factor, 4)
+
+
+def _track_access(conn: sqlite3.Connection, memory_id: int) -> None:
+    """Update access tracking for a memory (last_accessed and access_count)."""
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute(
+        """
+        UPDATE memories
+        SET access_count = COALESCE(access_count, 0) + 1,
+            last_accessed = ?
+        WHERE id = ?
+        """,
+        (now, memory_id),
+    )
+    # Don't commit here - let caller manage transaction
+
+
+def boost_memory(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    boost_amount: float = 0.5,
+) -> Optional[Dict[str, Any]]:
+    """Boost a memory's base importance score.
+
+    Args:
+        conn: Database connection
+        memory_id: ID of memory to boost
+        boost_amount: Amount to add to base importance (default 0.5)
+
+    Returns:
+        Updated memory dict or None if not found
+    """
+    # First check if memory exists
+    row = conn.execute(
+        "SELECT importance FROM memories WHERE id = ?",
+        (memory_id,),
+    ).fetchone()
+
+    if not row:
+        return None
+
+    current = row["importance"] if row["importance"] is not None else 1.0
+    new_importance = current + boost_amount
+
+    conn.execute(
+        "UPDATE memories SET importance = ? WHERE id = ?",
+        (new_importance, memory_id),
+    )
+    conn.commit()
+
+    return get_memory(conn, memory_id)
 
 
 def get_statistics(conn: sqlite3.Connection) -> Dict[str, Any]:

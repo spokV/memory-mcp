@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from .storage import (
     add_memory,
     add_memories,
+    boost_memory,
     clear_events,
     collect_all_tags,
     connect,
@@ -22,6 +23,7 @@ from .storage import (
     get_crossrefs,
     get_memory,
     get_statistics,
+    hybrid_search,
     import_memories,
     list_memories,
     poll_events,
@@ -126,8 +128,18 @@ def _list_memories(
     tags_any: Optional[List[str]],
     tags_all: Optional[List[str]],
     tags_none: Optional[List[str]],
+    sort_by_importance: bool = False,
 ):
-    return list_memories(conn, query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
+    return list_memories(
+        conn, query, metadata_filters, limit, offset,
+        date_from, date_to, tags_any, tags_all, tags_none,
+        sort_by_importance=sort_by_importance,
+    )
+
+
+@_with_connection(writes=True)
+def _boost_memory(conn, memory_id: int, boost_amount: float):
+    return boost_memory(conn, memory_id, boost_amount)
 
 
 @_with_connection(writes=True)
@@ -182,6 +194,35 @@ def _semantic_search(
         metadata_filters=metadata_filters,
         top_k=top_k,
         min_score=min_score,
+    )
+
+
+@_with_connection
+def _hybrid_search(
+    conn,
+    query: str,
+    semantic_weight: float,
+    top_k: int,
+    min_score: float,
+    metadata_filters: Optional[Dict[str, Any]],
+    date_from: Optional[str],
+    date_to: Optional[str],
+    tags_any: Optional[List[str]],
+    tags_all: Optional[List[str]],
+    tags_none: Optional[List[str]],
+):
+    return hybrid_search(
+        conn,
+        query,
+        semantic_weight=semantic_weight,
+        top_k=top_k,
+        min_score=min_score,
+        metadata_filters=metadata_filters,
+        date_from=date_from,
+        date_to=date_to,
+        tags_any=tags_any,
+        tags_all=tags_all,
+        tags_none=tags_none,
     )
 
 
@@ -323,6 +364,7 @@ async def memory_list(
     tags_any: Optional[List[str]] = None,
     tags_all: Optional[List[str]] = None,
     tags_none: Optional[List[str]] = None,
+    sort_by_importance: bool = False,
 ) -> Dict[str, Any]:
     """List memories, optionally filtering by substring query or metadata.
 
@@ -336,9 +378,14 @@ async def memory_list(
         tags_any: Match memories with ANY of these tags (OR logic)
         tags_all: Match memories with ALL of these tags (AND logic)
         tags_none: Exclude memories with ANY of these tags (NOT logic)
+        sort_by_importance: Sort results by importance score (default: False, sorts by date)
     """
     try:
-        items = _list_memories(query, metadata_filters, limit, offset, date_from, date_to, tags_any, tags_all, tags_none)
+        items = _list_memories(
+            query, metadata_filters, limit, offset,
+            date_from, date_to, tags_any, tags_all, tags_none,
+            sort_by_importance,
+        )
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
     return {"count": len(items), "memories": items}
@@ -519,6 +566,58 @@ async def memory_semantic_search(
 
 
 @mcp.tool()
+async def memory_hybrid_search(
+    query: str,
+    semantic_weight: float = 0.6,
+    top_k: int = 10,
+    min_score: float = 0.0,
+    metadata_filters: Optional[Dict[str, Any]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    tags_any: Optional[List[str]] = None,
+    tags_all: Optional[List[str]] = None,
+    tags_none: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Perform a hybrid search combining keyword (FTS) and semantic (vector) search.
+
+    Uses Reciprocal Rank Fusion (RRF) to merge results from both search methods,
+    providing better results than either method alone.
+
+    Args:
+        query: Search query text
+        semantic_weight: Weight for semantic results (0-1). Higher values favor semantic similarity.
+                        Keyword weight = 1 - semantic_weight. Default: 0.6 (60% semantic, 40% keyword)
+        top_k: Maximum number of results to return (default: 10)
+        min_score: Minimum combined score threshold (default: 0.0)
+        metadata_filters: Optional metadata filters
+        date_from: Optional date filter (ISO format or relative like "7d", "1m", "1y")
+        date_to: Optional date filter (ISO format or relative)
+        tags_any: Match memories with ANY of these tags (OR logic)
+        tags_all: Match memories with ALL of these tags (AND logic)
+        tags_none: Exclude memories with ANY of these tags (NOT logic)
+
+    Returns:
+        Dictionary with count and list of results, each containing score and memory
+    """
+    try:
+        results = _hybrid_search(
+            query,
+            semantic_weight,
+            top_k,
+            min_score,
+            metadata_filters,
+            date_from,
+            date_to,
+            tags_any,
+            tags_all,
+            tags_none,
+        )
+    except ValueError as exc:
+        return {"error": "invalid_filters", "message": str(exc)}
+    return {"count": len(results), "results": results}
+
+
+@mcp.tool()
 async def memory_rebuild_embeddings() -> Dict[str, Any]:
     """Recompute embeddings for all memories."""
 
@@ -547,6 +646,30 @@ async def memory_stats() -> Dict[str, Any]:
     """Get statistics and analytics about stored memories."""
 
     return _get_statistics()
+
+
+@mcp.tool()
+async def memory_boost(
+    memory_id: int,
+    boost_amount: float = 0.5,
+) -> Dict[str, Any]:
+    """Boost a memory's importance score.
+
+    Manually increase a memory's base importance to make it rank higher in
+    importance-sorted searches. The boost is permanent and cumulative.
+
+    Args:
+        memory_id: ID of the memory to boost
+        boost_amount: Amount to add to base importance (default: 0.5)
+                      Common values: 0.25 (small), 0.5 (medium), 1.0 (large)
+
+    Returns:
+        Updated memory with new importance score, or error if not found
+    """
+    record = _boost_memory(memory_id, boost_amount)
+    if not record:
+        return {"error": "not_found", "id": memory_id}
+    return {"memory": record, "boosted_by": boost_amount}
 
 
 @mcp.tool()
