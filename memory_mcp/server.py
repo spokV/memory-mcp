@@ -729,9 +729,44 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
                 edges.append({"from": m["id"], "to": ref["id"]})
 
     legend_html = "".join(
-        f'<div class="legend-item"><span class="legend-color" style="background:{c}"></span>{t}</div>'
+        f'<div class="legend-item" data-tag="{t}" onclick="filterByTag(\'{t}\')"><span class="legend-color" style="background:{c}"></span>{t}</div>'
         for t, c in list(tag_colors.items())[:12]
     )
+
+    # Build tag to node mapping
+    tag_to_nodes = {}
+    for m in memories:
+        for tag in m.get("tags", []):
+            if tag not in tag_to_nodes:
+                tag_to_nodes[tag] = []
+            tag_to_nodes[tag].append(m["id"])
+
+    # Build section/subsection to node mapping
+    section_to_nodes = {}
+    subsection_to_nodes = {}
+    for m in memories:
+        meta = m.get("metadata") or {}
+        section = meta.get("section", "Uncategorized")
+        subsection = meta.get("subsection", "")
+
+        if section not in section_to_nodes:
+            section_to_nodes[section] = []
+        section_to_nodes[section].append(m["id"])
+
+        if subsection:
+            key = f"{section}/{subsection}"
+            if key not in subsection_to_nodes:
+                subsection_to_nodes[key] = []
+            subsection_to_nodes[key].append(m["id"])
+
+    # Build sections HTML
+    sections_html = ""
+    for section, node_ids in section_to_nodes.items():
+        sections_html += f'<div class="section-item" data-section="{section}" onclick="filterBySection(\'{section}\')">{section} ({len(node_ids)})</div>'
+        for sub_key, sub_ids in subsection_to_nodes.items():
+            if sub_key.startswith(section + "/"):
+                subsection = sub_key.split("/", 1)[1]
+                sections_html += f'<div class="subsection-item" data-subsection="{sub_key}" onclick="filterBySubsection(\'{sub_key}\')">└ {subsection} ({len(sub_ids)})</div>'
 
     html = f'''<!DOCTYPE html>
 <html>
@@ -747,14 +782,27 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
         #panel.active {{ display: block; }}
         #panel h2 {{ color: #58a6ff; margin-bottom: 10px; font-size: 16px; }}
         #panel .tags {{ margin-bottom: 15px; }}
-        #panel .tag {{ display: inline-block; background: #30363d; padding: 3px 8px; border-radius: 12px; font-size: 12px; margin: 2px; }}
+        #panel .tag {{ display: inline-block; background: #30363d; padding: 3px 8px; border-radius: 12px; font-size: 12px; margin: 2px; cursor: pointer; }}
+        #panel .tag:hover {{ background: #484f58; }}
         #panel .meta {{ color: #8b949e; font-size: 12px; margin-bottom: 15px; }}
         #panel .content {{ white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: #0d1117; padding: 15px; border-radius: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }}
         #panel .close {{ position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }}
         #panel .close:hover {{ color: #fff; }}
         #legend {{ position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }}
-        .legend-item {{ margin: 4px 0; display: flex; align-items: center; }}
+        .legend-item {{ margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }}
+        .legend-item:hover {{ background: rgba(255,255,255,0.1); }}
+        .legend-item.active {{ background: rgba(88,166,255,0.3); }}
         .legend-color {{ width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }}
+        #legend .reset {{ margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }}
+        #legend .reset:hover {{ text-decoration: underline; }}
+        #sections {{ position: absolute; top: 10px; right: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-width: 200px; }}
+        #sections b {{ display: block; margin-bottom: 8px; }}
+        .section-item {{ margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }}
+        .section-item:hover {{ background: rgba(255,255,255,0.1); }}
+        .section-item.active {{ background: rgba(126,231,135,0.3); }}
+        .subsection-item {{ margin: 2px 0 2px 8px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }}
+        .subsection-item:hover {{ background: rgba(255,255,255,0.1); }}
+        .subsection-item.active {{ background: rgba(88,166,255,0.3); color: #c9d1d9; }}
         #help {{ position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }}
     </style>
 </head>
@@ -767,12 +815,18 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
         <div class="tags" id="panel-tags"></div>
         <div class="content" id="panel-content"></div>
     </div>
-    <div id="legend"><b>Tags</b>{legend_html}</div>
-    <div id="help">Click node to view | Scroll to zoom | Drag to pan</div>
+    <div id="legend"><b>Tags</b>{legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
+    <div id="sections"><b>Sections</b>{sections_html}</div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom</div>
     <script>
         var memoriesData = {json_lib.dumps(memories_data)};
-        var nodes = new vis.DataSet({json_lib.dumps(nodes)});
-        var edges = new vis.DataSet({json_lib.dumps(edges)});
+        var tagToNodes = {json_lib.dumps(tag_to_nodes)};
+        var sectionToNodes = {json_lib.dumps(section_to_nodes)};
+        var subsectionToNodes = {json_lib.dumps(subsection_to_nodes)};
+        var allNodes = {json_lib.dumps(nodes)};
+        var allEdges = {json_lib.dumps(edges)};
+        var nodes = new vis.DataSet(allNodes);
+        var edges = new vis.DataSet(allEdges);
         var container = document.getElementById("graph");
         var data = {{ nodes: nodes, edges: edges }};
         var options = {{
@@ -782,6 +836,64 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
             interaction: {{ hover: true, tooltipDelay: 100 }}
         }};
         var network = new vis.Network(container, data, options);
+        var currentFilter = null;
+
+        function filterByTag(tag) {{
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            var el = document.querySelector('.legend-item[data-tag="' + tag + '"]');
+            if (el) el.classList.add('active');
+            currentFilter = tag;
+            var nodeIds = tagToNodes[tag] || [];
+            var nodeSet = new Set(nodeIds);
+            nodes.clear();
+            edges.clear();
+            var filteredNodes = allNodes.filter(n => nodeSet.has(n.id));
+            var filteredEdges = allEdges.filter(e => nodeSet.has(e.from) && nodeSet.has(e.to));
+            nodes.add(filteredNodes);
+            edges.add(filteredEdges);
+            network.fit({{ animation: true }});
+        }}
+
+        function resetFilter() {{
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            currentFilter = null;
+            nodes.clear();
+            edges.clear();
+            nodes.add(allNodes);
+            edges.add(allEdges);
+            network.fit({{ animation: true }});
+        }}
+
+        function filterBySection(section) {{
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            document.querySelector('.section-item[data-section="' + section + '"]').classList.add('active');
+            currentFilter = section;
+            var nodeIds = sectionToNodes[section] || [];
+            var nodeSet = new Set(nodeIds);
+            nodes.clear();
+            edges.clear();
+            var filteredNodes = allNodes.filter(n => nodeSet.has(n.id));
+            var filteredEdges = allEdges.filter(e => nodeSet.has(e.from) && nodeSet.has(e.to));
+            nodes.add(filteredNodes);
+            edges.add(filteredEdges);
+            network.fit({{ animation: true }});
+        }}
+
+        function filterBySubsection(subsection) {{
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            document.querySelector('.subsection-item[data-subsection="' + subsection + '"]').classList.add('active');
+            currentFilter = subsection;
+            var nodeIds = subsectionToNodes[subsection] || [];
+            var nodeSet = new Set(nodeIds);
+            nodes.clear();
+            edges.clear();
+            var filteredNodes = allNodes.filter(n => nodeSet.has(n.id));
+            var filteredEdges = allEdges.filter(e => nodeSet.has(e.from) && nodeSet.has(e.to));
+            nodes.add(filteredNodes);
+            edges.add(filteredEdges);
+            network.fit({{ animation: true }});
+        }}
+
         network.on("click", function(params) {{
             if (params.nodes.length > 0) {{
                 var nodeId = params.nodes[0];
@@ -789,7 +901,7 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
                 if (mem) {{
                     document.getElementById("panel-title").textContent = "Memory #" + mem.id;
                     document.getElementById("panel-meta").textContent = "Created: " + mem.created;
-                    document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag">' + t + '</span>').join("");
+                    document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag" onclick="filterByTag(\\''+t+'\\'); event.stopPropagation();">' + t + '</span>').join("");
                     document.getElementById("panel-content").textContent = mem.content;
                     document.getElementById("panel").classList.add("active");
                 }}
