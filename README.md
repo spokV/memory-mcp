@@ -11,6 +11,7 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 - **Cross-references** - Auto-linked related memories based on similarity
 - **Hierarchical Organization** - Explore memories by section/subsection
 - **Export/Import** - Backup and restore with merge strategies
+- **Knowledge Graph** - Interactive HTML visualization with filtering
 - **Statistics & Analytics** - Tag usage, trends, and connection insights
 - **Zero Dependencies** - Works out-of-box with Python stdlib (optional backends available)
 
@@ -90,3 +91,25 @@ cp nvim/memory-mcp.lua ~/.config/nvim/lua/kickstart/plugins/
 **Usage:** Press `<leader>sm` to open the memory browser with fuzzy search and preview.
 
 Requires: `telescope.nvim`, `plenary.nvim`, and `memory-mcp` installed in your Python environment.
+
+## Knowledge Graph Export
+
+Export memories as an interactive HTML knowledge graph visualization:
+
+```python
+# Via MCP tool
+memory_export_graph(output_path="~/memories_graph.html", min_score=0.25)
+```
+
+**Features:**
+- Interactive node-based graph using vis.js
+- Click nodes to view full memory content in side panel
+- Filter by **tags** (left panel) - click any tag to show only related memories
+- Filter by **sections/subsections** (right panel) - hierarchical organization
+- Edges show cross-reference similarity between memories
+- "Show All" button to reset filters
+- Zoom, pan, and drag nodes to explore
+
+**Parameters:**
+- `output_path`: Where to save the HTML file (default: `~/memories_graph.html`)
+- `min_score`: Minimum similarity score for edges (default: 0.25)
