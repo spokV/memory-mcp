@@ -76,3 +76,17 @@ Add to `.mcp.json` in your project root:
     }
   }
 }
+```
+
+## Neovim Integration
+
+Browse memories directly in Neovim with Telescope. Copy the plugin to your config:
+
+```bash
+# For kickstart.nvim / lazy.nvim
+cp nvim/memory-mcp.lua ~/.config/nvim/lua/kickstart/plugins/
+```
+
+**Usage:** Press `<leader>sm` to open the memory browser with fuzzy search and preview.
+
+Requires: `telescope.nvim`, `plenary.nvim`, and `memory-mcp` installed in your Python environment.
