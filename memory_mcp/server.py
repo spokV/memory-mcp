@@ -771,15 +771,14 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
 
         if subsection:
             # Build all intermediate paths (e.g., "Dev" and "Dev/Issues" from "Dev/Issues")
+            # Add memory to ALL levels so parent shows cumulative count
             parts = subsection.split("/")
             for i in range(len(parts)):
                 partial_path = "/".join(parts[:i+1])
                 full_key = f"{section}/{partial_path}"
                 if full_key not in path_to_nodes:
                     path_to_nodes[full_key] = []
-                # Only add to leaf path
-                if i == len(parts) - 1:
-                    path_to_nodes[full_key].append(m["id"])
+                path_to_nodes[full_key].append(m["id"])
 
     # Build sections HTML with nested hierarchy
     sections_html = ""
@@ -803,8 +802,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                     rendered_paths.add(render_key)
                     indent = "&nbsp;&nbsp;" * i
                     count = len(path_to_nodes.get(render_key, []))
-                    count_str = f" ({count})" if count > 0 else ""
-                    sections_html += f'<div class="subsection-item" data-subsection="{render_key}" onclick="filterBySubsection(\'{render_key}\')" style="padding-left:{8 + i*12}px;">{indent}└ {part}{count_str}</div>'
+                    sections_html += f'<div class="subsection-item" data-subsection="{render_key}" onclick="filterBySubsection(\'{render_key}\')" style="padding-left:{8 + i*12}px;">{indent}└ {part} ({count})</div>'
 
     html = f'''<!DOCTYPE html>
 <html>
