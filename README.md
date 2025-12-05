@@ -1,4 +1,4 @@
-# MCP Memory Server
+# Memory MCP Server
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
@@ -12,6 +12,7 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 - **Hierarchical Organization** - Explore memories by section/subsection
 - **Export/Import** - Backup and restore with merge strategies
 - **Knowledge Graph** - Interactive HTML visualization with filtering
+- **Live Graph Server** - Auto-starts HTTP server for remote access via SSH
 - **Statistics & Analytics** - Tag usage, trends, and connection insights
 - **Zero Dependencies** - Works out-of-box with Python stdlib (optional backends available)
 
@@ -54,7 +55,8 @@ Add to `.mcp.json` in your project root:
       "args": [],
       "env": {
         "MEMORY_MCP_DB_PATH": "{$HOME}/.local/share/memory-mcp/memories.db",
-        "MEMORY_MCP_ALLOW_ANY_TAG": "1"
+        "MEMORY_MCP_ALLOW_ANY_TAG": "1",
+        "MEMORY_MCP_GRAPH_PORT": "8765"
       }
     }
   }
@@ -72,7 +74,8 @@ Add to `.mcp.json` in your project root:
         "AWS_ENDPOINT_URL": "https://xxxxxxx.r2.cloudflarestorage.com",
         "MEMORY_MCP_STORAGE_URI": "s3://memories/memories.db",
         "MEMORY_MCP_CLOUD_ENCRYPT": "true",
-        "MEMORY_MCP_ALLOW_ANY_TAG": "1"
+        "MEMORY_MCP_ALLOW_ANY_TAG": "1",
+        "MEMORY_MCP_GRAPH_PORT": "8765"
       }
     }
   }
@@ -113,3 +116,31 @@ memory_export_graph(output_path="~/memories_graph.html", min_score=0.25)
 **Parameters:**
 - `output_path`: Where to save the HTML file (default: `~/memories_graph.html`)
 - `min_score`: Minimum similarity score for edges (default: 0.25)
+
+## Live Graph Server
+
+A built-in HTTP server starts automatically with the MCP server, serving the graph visualization on-demand.
+
+**Access locally:**
+```
+http://localhost:8765/graph
+```
+
+**Remote access via SSH:**
+```bash
+ssh -L 8765:localhost:8765 user@remote
+# Then open http://localhost:8765/graph in your browser
+```
+
+**Configuration:**
+```json
+{
+  "env": {
+    "MEMORY_MCP_GRAPH_PORT": "8765"
+  }
+}
+```
+
+Use different ports on different machines to avoid conflicts when forwarding multiple servers.
+
+To disable: add `"--no-graph"` to args in your MCP config.

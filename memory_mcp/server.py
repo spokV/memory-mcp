@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse
 
 from .storage import (
     add_memory,
@@ -49,8 +51,22 @@ _env_transport = os.getenv("MEMORY_MCP_TRANSPORT", "stdio")
 DEFAULT_TRANSPORT = _env_transport if _env_transport in VALID_TRANSPORTS else "stdio"
 DEFAULT_HOST = os.getenv("MEMORY_MCP_HOST", "127.0.0.1")
 DEFAULT_PORT = _read_int_env("MEMORY_MCP_PORT", 8000)
+DEFAULT_GRAPH_PORT = _read_int_env("MEMORY_MCP_GRAPH_PORT", 8765)
 
 mcp = FastMCP("Memory MCP Server", host=DEFAULT_HOST, port=DEFAULT_PORT)
+
+
+@mcp.custom_route("/graph", methods=["GET"])
+async def serve_graph(request: Request):
+    """Serve the knowledge graph visualization via HTTP."""
+    try:
+        min_score = float(request.query_params.get("min_score", 0.25))
+        result = _export_graph_html(output_path=None, min_score=min_score)
+        if "error" in result:
+            return JSONResponse(result, status_code=404)
+        return HTMLResponse(result["html"])
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 def _with_connection(func=None, *, writes=False):
@@ -681,7 +697,7 @@ async def memory_export() -> Dict[str, Any]:
 
 
 @_with_connection
-def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, Any]:
+def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Dict[str, Any]:
     """Generate HTML knowledge graph visualization."""
     import json as json_lib
     from .storage import list_memories, get_crossrefs, rebuild_crossrefs
@@ -912,15 +928,20 @@ def _export_graph_html(conn, output_path: str, min_score: float) -> Dict[str, An
 </body>
 </html>'''
 
-    with open(output_path, "w") as f:
-        f.write(html)
-
-    return {
-        "path": output_path,
+    result = {
         "nodes": len(nodes),
         "edges": len(edges),
         "tags": list(tag_colors.keys()),
     }
+
+    if output_path is not None:
+        with open(output_path, "w") as f:
+            f.write(html)
+        result["path"] = output_path
+    else:
+        result["html"] = html
+
+    return result
 
 
 @mcp.tool()
@@ -1011,6 +1032,59 @@ async def memory_events_clear(event_ids: List[int]) -> Dict[str, Any]:
     return {"cleared": cleared}
 
 
+def _is_port_in_use(host: str, port: int) -> bool:
+    """Check if a port is already in use."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return False
+        except OSError:
+            return True
+
+
+def _start_graph_server(host: str, port: int) -> None:
+    """Start background HTTP server for graph visualization."""
+    import threading
+    import sys
+
+    # Skip if port already in use (another instance running)
+    if _is_port_in_use(host, port):
+        print(f"Graph server port {port} already in use, skipping", file=sys.stderr)
+        return
+
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    async def graph_handler(request: Request):
+        """Serve the knowledge graph visualization."""
+        try:
+            min_score = float(request.query_params.get("min_score", 0.25))
+            result = _export_graph_html(output_path=None, min_score=min_score)
+            if "error" in result:
+                return JSONResponse(result, status_code=404)
+            return HTMLResponse(result["html"])
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    app = Starlette(routes=[Route("/graph", graph_handler)])
+
+    def run_server():
+        import uvicorn
+        # Suppress uvicorn logs to avoid cluttering MCP stdio
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            access_log=False,
+        )
+
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    print(f"Graph server started at http://{host}:{port}/graph", file=sys.stderr)
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Memory MCP Server")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -1032,6 +1106,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         type=int,
         default=DEFAULT_PORT,
         help="Port for HTTP transports (defaults to env MEMORY_MCP_PORT or 8000)",
+    )
+    parser.add_argument(
+        "--graph-port",
+        type=int,
+        default=DEFAULT_GRAPH_PORT,
+        help="Port for graph visualization server (defaults to env MEMORY_MCP_GRAPH_PORT or 8765)",
+    )
+    parser.add_argument(
+        "--no-graph",
+        action="store_true",
+        help="Disable the graph visualization server",
     )
 
     # Subcommand: sync-pull
@@ -1073,6 +1158,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         # Default: start server
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+
+        # Start graph visualization server unless disabled
+        if not args.no_graph:
+            _start_graph_server(args.host, args.graph_port)
+
         mcp.run(transport=args.transport)
 
 
