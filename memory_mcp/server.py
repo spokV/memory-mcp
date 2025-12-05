@@ -851,7 +851,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         .legend-color {{ width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }}
         #legend .reset {{ margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }}
         #legend .reset:hover {{ text-decoration: underline; }}
-        #sections {{ position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-width: 200px; max-height: 40vh; overflow-y: auto; }}
+        #sections {{ position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-height: 40vh; overflow-y: auto; white-space: nowrap; }}
         #sections b {{ display: block; margin-bottom: 8px; }}
         .section-item {{ margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }}
         .section-item:hover {{ background: rgba(255,255,255,0.1); }}
@@ -1009,7 +1009,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             isResizing = false;
             resizeHandle.classList.remove("dragging");
             document.body.style.cursor = "";
-        }})
+        }});
     </script>
 </body>
 </html>'''
