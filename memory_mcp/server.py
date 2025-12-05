@@ -789,6 +789,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
 <head>
     <title>Memory Knowledge Graph</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -801,9 +802,28 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         #panel .tag {{ display: inline-block; background: #30363d; padding: 3px 8px; border-radius: 12px; font-size: 12px; margin: 2px; cursor: pointer; }}
         #panel .tag:hover {{ background: #484f58; }}
         #panel .meta {{ color: #8b949e; font-size: 12px; margin-bottom: 15px; }}
-        #panel .content {{ white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: #0d1117; padding: 15px; border-radius: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }}
+        #panel .content {{ font-size: 13px; line-height: 1.6; background: #0d1117; padding: 15px; border-radius: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }}
+        #panel .content h1, #panel .content h2, #panel .content h3 {{ color: #58a6ff; margin: 16px 0 8px 0; }}
+        #panel .content h1 {{ font-size: 1.4em; border-bottom: 1px solid #30363d; padding-bottom: 8px; }}
+        #panel .content h2 {{ font-size: 1.2em; }}
+        #panel .content h3 {{ font-size: 1.1em; }}
+        #panel .content p {{ margin: 8px 0; }}
+        #panel .content ul, #panel .content ol {{ margin: 8px 0 8px 20px; }}
+        #panel .content li {{ margin: 4px 0; }}
+        #panel .content code {{ background: #30363d; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; }}
+        #panel .content pre {{ background: #0d1117; border: 1px solid #30363d; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }}
+        #panel .content pre code {{ background: none; padding: 0; }}
+        #panel .content a {{ color: #58a6ff; }}
+        #panel .content table {{ border-collapse: collapse; margin: 8px 0; width: 100%; }}
+        #panel .content th, #panel .content td {{ border: 1px solid #30363d; padding: 6px 10px; text-align: left; }}
+        #panel .content th {{ background: #21262d; }}
+        #panel .content blockquote {{ border-left: 3px solid #30363d; padding-left: 12px; margin: 8px 0; color: #8b949e; }}
+        #panel .content strong {{ color: #f0f6fc; }}
         #panel .close {{ position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }}
         #panel .close:hover {{ color: #fff; }}
+        #resize-handle {{ width: 6px; background: #30363d; cursor: ew-resize; display: none; }}
+        #resize-handle:hover, #resize-handle.dragging {{ background: #58a6ff; }}
+        #resize-handle.active {{ display: block; }}
         #legend {{ position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }}
         .legend-item {{ margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }}
         .legend-item:hover {{ background: rgba(255,255,255,0.1); }}
@@ -824,6 +844,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
 </head>
 <body>
     <div id="graph"></div>
+    <div id="resize-handle"></div>
     <div id="panel">
         <span class="close" onclick="closePanel()">&times;</span>
         <h2 id="panel-title">Memory #</h2>
@@ -910,6 +931,21 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             network.fit({{ animation: true }});
         }}
 
+        // Configure marked for GitHub-flavored markdown
+        marked.setOptions({{
+            breaks: true,
+            gfm: true
+        }});
+
+        function renderMarkdown(text) {{
+            // Use marked to render markdown, links open in new tab
+            var renderer = new marked.Renderer();
+            renderer.link = function(href, title, text) {{
+                return '<a href="' + href + '" target="_blank">' + text + '</a>';
+            }};
+            return marked.parse(text, {{ renderer: renderer }});
+        }}
+
         network.on("click", function(params) {{
             if (params.nodes.length > 0) {{
                 var nodeId = params.nodes[0];
@@ -918,12 +954,42 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                     document.getElementById("panel-title").textContent = "Memory #" + mem.id;
                     document.getElementById("panel-meta").textContent = "Created: " + mem.created;
                     document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag" onclick="filterByTag(\\''+t+'\\'); event.stopPropagation();">' + t + '</span>').join("");
-                    document.getElementById("panel-content").textContent = mem.content;
+                    document.getElementById("panel-content").innerHTML = renderMarkdown(mem.content);
                     document.getElementById("panel").classList.add("active");
+                    document.getElementById("resize-handle").classList.add("active");
                 }}
             }}
         }});
-        function closePanel() {{ document.getElementById("panel").classList.remove("active"); }}
+        function closePanel() {{
+            document.getElementById("panel").classList.remove("active");
+            document.getElementById("resize-handle").classList.remove("active");
+        }}
+
+        // Resize handle logic
+        var resizeHandle = document.getElementById("resize-handle");
+        var panel = document.getElementById("panel");
+        var isResizing = false;
+
+        resizeHandle.addEventListener("mousedown", function(e) {{
+            isResizing = true;
+            resizeHandle.classList.add("dragging");
+            document.body.style.cursor = "ew-resize";
+            e.preventDefault();
+        }});
+
+        document.addEventListener("mousemove", function(e) {{
+            if (!isResizing) return;
+            var newWidth = window.innerWidth - e.clientX;
+            if (newWidth >= 200 && newWidth <= 800) {{
+                panel.style.width = newWidth + "px";
+            }}
+        }});
+
+        document.addEventListener("mouseup", function() {{
+            isResizing = false;
+            resizeHandle.classList.remove("dragging");
+            document.body.style.cursor = "";
+        }})
     </script>
 </body>
 </html>'''
