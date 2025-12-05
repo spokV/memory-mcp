@@ -757,9 +757,9 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                 tag_to_nodes[tag] = []
             tag_to_nodes[tag].append(m["id"])
 
-    # Build section/subsection to node mapping
+    # Build section/subsection to node mapping (supports nested paths like "Development/Issues")
     section_to_nodes = {}
-    subsection_to_nodes = {}
+    path_to_nodes = {}  # Full path -> node ids
     for m in memories:
         meta = m.get("metadata") or {}
         section = meta.get("section", "Uncategorized")
@@ -770,19 +770,41 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         section_to_nodes[section].append(m["id"])
 
         if subsection:
-            key = f"{section}/{subsection}"
-            if key not in subsection_to_nodes:
-                subsection_to_nodes[key] = []
-            subsection_to_nodes[key].append(m["id"])
+            # Build all intermediate paths (e.g., "Dev" and "Dev/Issues" from "Dev/Issues")
+            parts = subsection.split("/")
+            for i in range(len(parts)):
+                partial_path = "/".join(parts[:i+1])
+                full_key = f"{section}/{partial_path}"
+                if full_key not in path_to_nodes:
+                    path_to_nodes[full_key] = []
+                # Only add to leaf path
+                if i == len(parts) - 1:
+                    path_to_nodes[full_key].append(m["id"])
 
-    # Build sections HTML
+    # Build sections HTML with nested hierarchy
     sections_html = ""
     for section, node_ids in section_to_nodes.items():
         sections_html += f'<div class="section-item" data-section="{section}" onclick="filterBySection(\'{section}\')">{section} ({len(node_ids)})</div>'
-        for sub_key, sub_ids in subsection_to_nodes.items():
-            if sub_key.startswith(section + "/"):
-                subsection = sub_key.split("/", 1)[1]
-                sections_html += f'<div class="subsection-item" data-subsection="{sub_key}" onclick="filterBySubsection(\'{sub_key}\')">└ {subsection} ({len(sub_ids)})</div>'
+
+        # Get all paths under this section and sort by depth
+        section_paths = sorted([k for k in path_to_nodes.keys() if k.startswith(section + "/")])
+        rendered_paths = set()
+
+        for full_path in section_paths:
+            sub_path = full_path[len(section)+1:]  # Remove "Section/" prefix
+            parts = sub_path.split("/")
+
+            # Render each level of the path
+            for i, part in enumerate(parts):
+                partial = "/".join(parts[:i+1])
+                render_key = f"{section}/{partial}"
+
+                if render_key not in rendered_paths:
+                    rendered_paths.add(render_key)
+                    indent = "&nbsp;&nbsp;" * i
+                    count = len(path_to_nodes.get(render_key, []))
+                    count_str = f" ({count})" if count > 0 else ""
+                    sections_html += f'<div class="subsection-item" data-subsection="{render_key}" onclick="filterBySubsection(\'{render_key}\')" style="padding-left:{8 + i*12}px;">{indent}└ {part}{count_str}</div>'
 
     html = f'''<!DOCTYPE html>
 <html>
@@ -831,7 +853,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         .legend-color {{ width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }}
         #legend .reset {{ margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }}
         #legend .reset:hover {{ text-decoration: underline; }}
-        #sections {{ position: absolute; top: 10px; right: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-width: 200px; }}
+        #sections {{ position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-width: 200px; max-height: 40vh; overflow-y: auto; }}
         #sections b {{ display: block; margin-bottom: 8px; }}
         .section-item {{ margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }}
         .section-item:hover {{ background: rgba(255,255,255,0.1); }}
@@ -859,7 +881,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         var memoriesData = {json_lib.dumps(memories_data)};
         var tagToNodes = {json_lib.dumps(tag_to_nodes)};
         var sectionToNodes = {json_lib.dumps(section_to_nodes)};
-        var subsectionToNodes = {json_lib.dumps(subsection_to_nodes)};
+        var subsectionToNodes = {json_lib.dumps(path_to_nodes)};
         var allNodes = {json_lib.dumps(nodes)};
         var allEdges = {json_lib.dumps(edges)};
         var nodes = new vis.DataSet(allNodes);
