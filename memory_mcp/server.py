@@ -810,6 +810,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
     <title>Memory Knowledge Graph</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -838,6 +839,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         #panel .content th, #panel .content td {{ border: 1px solid #30363d; padding: 6px 10px; text-align: left; }}
         #panel .content th {{ background: #21262d; }}
         #panel .content blockquote {{ border-left: 3px solid #30363d; padding-left: 12px; margin: 8px 0; color: #8b949e; }}
+        #panel .content .mermaid {{ background: #161b22; padding: 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }}
         #panel .content strong {{ color: #f0f6fc; }}
         #panel .close {{ position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }}
         #panel .close:hover {{ color: #fff; }}
@@ -957,6 +959,20 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             gfm: true
         }});
 
+        // Initialize mermaid with dark theme
+        mermaid.initialize({{
+            startOnLoad: false,
+            theme: 'dark',
+            themeVariables: {{
+                primaryColor: '#58a6ff',
+                primaryTextColor: '#c9d1d9',
+                primaryBorderColor: '#30363d',
+                lineColor: '#8b949e',
+                secondaryColor: '#21262d',
+                tertiaryColor: '#161b22'
+            }}
+        }});
+
         function renderMarkdown(text) {{
             // Use marked to render markdown, links open in new tab
             var renderer = new marked.Renderer();
@@ -964,6 +980,20 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                 return '<a href="' + href + '" target="_blank">' + text + '</a>';
             }};
             return marked.parse(text, {{ renderer: renderer }});
+        }}
+
+        async function renderMermaidBlocks() {{
+            // Find mermaid code blocks and render them as diagrams
+            var blocks = document.querySelectorAll('#panel-content pre code.language-mermaid');
+            for (var block of blocks) {{
+                var container = document.createElement('div');
+                container.className = 'mermaid';
+                container.textContent = block.textContent;
+                block.parentElement.replaceWith(container);
+            }}
+            if (blocks.length > 0) {{
+                await mermaid.run();
+            }}
         }}
 
         network.on("click", function(params) {{
@@ -975,6 +1005,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                     document.getElementById("panel-meta").textContent = "Created: " + mem.created;
                     document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag" onclick="filterByTag(\\''+t+'\\'); event.stopPropagation();">' + t + '</span>').join("");
                     document.getElementById("panel-content").innerHTML = renderMarkdown(mem.content);
+                    renderMermaidBlocks();
                     document.getElementById("panel").classList.add("active");
                     document.getElementById("resize-handle").classList.add("active");
                 }}
