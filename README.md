@@ -108,10 +108,14 @@ memory_export_graph(output_path="~/memories_graph.html", min_score=0.25)
 - Interactive node-based graph using vis.js
 - Click nodes to view full memory content in side panel
 - Filter by **tags** (left panel) - click any tag to show only related memories
-- Filter by **sections/subsections** (right panel) - hierarchical organization
+- Filter by **sections/subsections** (right panel) - nested hierarchical organization with cumulative counts
 - Edges show cross-reference similarity between memories
 - "Show All" button to reset filters
 - Zoom, pan, and drag nodes to explore
+- **Memory ID tooltip** - hover over any node to see its memory ID
+- **Mermaid diagram rendering** - code blocks with mermaid syntax render as diagrams
+- **Resizable detail panel** - drag to resize the markdown preview panel
+- **Image thumbnails** - images in metadata auto-resize for efficient storage (200px, 70% quality)
 
 **Parameters:**
 - `output_path`: Where to save the HTML file (default: `~/memories_graph.html`)
