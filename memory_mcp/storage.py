@@ -1,11 +1,16 @@
 """SQLite storage helpers shared by memory servers."""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import math
+import mimetypes
 import os
 import re
 import sqlite3
+
+from PIL import Image
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -317,12 +322,107 @@ def _normalise_tasks(tasks: Any) -> List[Dict[str, Any]]:
     return normalised
 
 
+def _encode_image_to_data_uri(src: str, max_size: int = 200, quality: int = 70) -> str:
+    """Convert a file path to a base64 data URI, resizing large images.
+
+    Args:
+        src: Image source (file path, file:// URI, or existing data URI/URL)
+        max_size: Maximum dimension (width or height) in pixels. Default 200 (thumbnail).
+        quality: JPEG quality (1-100). Default 70.
+
+    Returns:
+        Base64 data URI string
+    """
+    # Already a data URI or URL - return as-is
+    if src.startswith('data:') or src.startswith('http://') or src.startswith('https://'):
+        return src
+
+    # Handle file:// URIs
+    if src.startswith('file://'):
+        file_path = src[7:]  # Remove file:// prefix
+    else:
+        file_path = src
+
+    # Check if file exists
+    path = Path(file_path).expanduser()
+    if not path.exists():
+        return src  # Return original if file doesn't exist
+
+    try:
+        # Open image with Pillow
+        img = Image.open(path)
+
+        # Convert RGBA to RGB if saving as JPEG (no alpha support)
+        has_alpha = img.mode in ('RGBA', 'LA', 'P')
+
+        # Resize if larger than max_size
+        width, height = img.size
+        if width > max_size or height > max_size:
+            # Calculate new size maintaining aspect ratio
+            if width > height:
+                new_width = max_size
+                new_height = int(height * (max_size / width))
+            else:
+                new_height = max_size
+                new_width = int(width * (max_size / height))
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Encode to bytes
+        buffer = io.BytesIO()
+        if has_alpha:
+            # Keep PNG for images with transparency
+            img.save(buffer, format='PNG', optimize=True)
+            mime_type = 'image/png'
+        else:
+            # Convert to RGB and save as JPEG for smaller size
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.save(buffer, format='JPEG', quality=quality, optimize=True)
+            mime_type = 'image/jpeg'
+
+        b64 = base64.b64encode(buffer.getvalue()).decode('ascii')
+        return f'data:{mime_type};base64,{b64}'
+
+    except Exception:
+        # Fallback: read raw file if Pillow fails
+        mime_type, _ = mimetypes.guess_type(str(path))
+        if mime_type is None or not mime_type.startswith('image/'):
+            mime_type = 'image/png'
+        with open(path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode('ascii')
+        return f'data:{mime_type};base64,{b64}'
+
+
+def _process_metadata_images(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Process images in metadata, encoding local files to data URIs."""
+    if 'images' not in metadata:
+        return metadata
+
+    images = metadata.get('images')
+    if not isinstance(images, list):
+        return metadata
+
+    processed_images = []
+    for img in images:
+        if isinstance(img, dict) and 'src' in img:
+            processed_img = dict(img)
+            processed_img['src'] = _encode_image_to_data_uri(img['src'])
+            processed_images.append(processed_img)
+        else:
+            processed_images.append(img)
+
+    result = dict(metadata)
+    result['images'] = processed_images
+    return result
+
+
 def _prepare_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if metadata is None:
         return None
     if not isinstance(metadata, Mapping):
         raise ValueError("Metadata must be a mapping")
-    return _build_metadata_dict(metadata)
+    processed = _process_metadata_images(dict(metadata))
+    return _build_metadata_dict(processed)
 
 
 def _present_metadata(metadata: Optional[Any]) -> Optional[Any]:

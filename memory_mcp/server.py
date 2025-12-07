@@ -725,6 +725,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         nodes.append({
             "id": m["id"],
             "label": label + "..." if len(content) > 35 else label,
+            "title": f"Memory #{m['id']}",
             "color": tag_colors[primary_tag],
         })
 
@@ -732,7 +733,8 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             "id": m["id"],
             "tags": tags,
             "created": m.get("created_at", ""),
-            "content": content
+            "content": content,
+            "metadata": m.get("metadata") or {}
         }
 
     edges = []
@@ -840,6 +842,10 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
         #panel .content th {{ background: #21262d; }}
         #panel .content blockquote {{ border-left: 3px solid #30363d; padding-left: 12px; margin: 8px 0; color: #8b949e; }}
         #panel .content .mermaid {{ background: #161b22; padding: 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }}
+        #panel .content .memory-images {{ margin-top: 16px; border-top: 1px solid #30363d; padding-top: 16px; }}
+        #panel .content .memory-image {{ margin: 8px 0; }}
+        #panel .content .memory-image img {{ max-width: 100%; border-radius: 6px; border: 1px solid #30363d; }}
+        #panel .content .memory-image .caption {{ font-size: 11px; color: #8b949e; margin-top: 4px; text-align: center; }}
         #panel .content strong {{ color: #f0f6fc; }}
         #panel .close {{ position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }}
         #panel .close:hover {{ color: #fff; }}
@@ -996,6 +1002,23 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             }}
         }}
 
+        function renderImages(metadata) {{
+            var images = metadata && metadata.images;
+            if (!images || images.length === 0) return '';
+
+            var html = '<div class="memory-images">';
+            for (var img of images) {{
+                html += '<div class="memory-image">';
+                html += '<img src="' + img.src + '" alt="' + (img.caption || '') + '">';
+                if (img.caption) {{
+                    html += '<div class="caption">' + img.caption + '</div>';
+                }}
+                html += '</div>';
+            }}
+            html += '</div>';
+            return html;
+        }}
+
         network.on("click", function(params) {{
             if (params.nodes.length > 0) {{
                 var nodeId = params.nodes[0];
@@ -1006,6 +1029,7 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
                     document.getElementById("panel-tags").innerHTML = mem.tags.map(t => '<span class="tag" onclick="filterByTag(\\''+t+'\\'); event.stopPropagation();">' + t + '</span>').join("");
                     document.getElementById("panel-content").innerHTML = renderMarkdown(mem.content);
                     renderMermaidBlocks();
+                    document.getElementById("panel-content").innerHTML += renderImages(mem.metadata);
                     document.getElementById("panel").classList.add("active");
                     document.getElementById("resize-handle").classList.add("active");
                 }}
