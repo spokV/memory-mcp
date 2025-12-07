@@ -1,0 +1,58 @@
+graph TB
+    subgraph Inputs
+        IMG[RGB Image<br/>480×640×3]
+        STATE[State Vector<br/>7-dim]
+        PROMPT[Text Prompt]
+    end
+
+    subgraph VLM["VLM Backbone (Qwen3-VL)"]
+        VE[Vision Encoder<br/>ViT Patches]
+        TE[Text Tokenizer]
+        LLM[LLM Transformer<br/>36 Layers<br/>20% Tuned]
+    end
+
+    subgraph Heads["Output Heads"]
+        subgraph ActionHead["Action Head (Flow-Matching DiT)"]
+            PROJ[Vision Features<br/>Projection]
+            DIT[DiT Blocks<br/>8 Layers]
+            FLOW[Flow Matching<br/>Denoising]
+            ACTION[Actions<br/>16×3]
+        end
+
+        subgraph DepthHead["Depth Head (Auxiliary)"]
+            DPROJ[Feature Projection]
+            DCONV[Conv Decoder<br/>4 Upsample Blocks]
+            DEPTH[Depth Map<br/>H/4 × W/4]
+        end
+
+        subgraph EgoHead["Ego-Motion Head (Planned)"]
+            EPROJ[Feature Projection]
+            EMLP[MLP Layers]
+            EGO[Ego-Motion<br/>6-DoF]
+        end
+    end
+
+    IMG --> VE
+    PROMPT --> TE
+    VE --> LLM
+    TE --> LLM
+    STATE --> PROJ
+
+    LLM -->|Vision Features| PROJ
+    LLM -->|Vision Features| DPROJ
+    LLM -->|Vision Features| EPROJ
+
+    PROJ --> DIT
+    DIT --> FLOW
+    FLOW --> ACTION
+
+    DPROJ --> DCONV
+    DCONV --> DEPTH
+
+    EPROJ --> EMLP
+    EMLP --> EGO
+
+    style VLM fill:#e1f5fe
+    style ActionHead fill:#f3e5f5
+    style DepthHead fill:#e8f5e9
+    style EgoHead fill:#fff3e0,stroke-dasharray: 5 5

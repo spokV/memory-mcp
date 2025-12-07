@@ -13,7 +13,7 @@ pytest.importorskip("filelock")
 import boto3
 from moto import mock_aws
 
-from memory_mcp.backends import (
+from memora.backends import (
     CloudSQLiteBackend,
     LocalSQLiteBackend,
     parse_backend_uri,
@@ -341,8 +341,8 @@ class TestBackendURIParsing:
 
     def test_parse_with_env_vars(self, tmp_path, monkeypatch):
         """Test that environment variables affect cloud backend creation."""
-        monkeypatch.setenv("MEMORY_MCP_CLOUD_ENCRYPT", "true")
-        monkeypatch.setenv("MEMORY_MCP_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("MEMORA_CLOUD_ENCRYPT", "true")
+        monkeypatch.setenv("MEMORA_CACHE_DIR", str(tmp_path))
 
         backend = parse_backend_uri("s3://bucket/key.db")
         assert isinstance(backend, CloudSQLiteBackend)
@@ -421,7 +421,7 @@ class TestConflictDetection:
 
     def test_concurrent_write_conflict_detection(self, tmp_path):
         """Test that concurrent writes are detected and raise ConflictError."""
-        from memory_mcp.backends import ConflictError
+        from memora.backends import ConflictError
 
         # Agent 1: Create and upload initial database
         backend1 = CloudSQLiteBackend(
@@ -468,7 +468,7 @@ class TestConflictDetection:
 
     def test_no_conflict_after_sync_pull(self, tmp_path):
         """Test that sync_pull resolves conflicts."""
-        from memory_mcp.backends import ConflictError
+        from memora.backends import ConflictError
 
         # Agent 1: Create and upload initial database
         backend1 = CloudSQLiteBackend(

@@ -20,14 +20,14 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 
 ```bash
 # From GitHub
-pip install git+https://github.com/spokV/memory-mcp.git
+pip install git+https://github.com/spokV/memora.git
 
 # For cloud storage (S3/R2/GCS/Azure), install boto3 separately
 pip install boto3
 
 # Or from local clone with extras
-pip install -e ".mcp/src/memory-mcp[cloud]"  # includes boto3
-pip install -e ".mcp/src/memory-mcp[all]"    # includes cloud + dev tools
+pip install -e ".[cloud]"  # includes boto3
+pip install -e ".[all]"    # includes cloud + dev tools
 ```
 
 ## Usage
@@ -36,10 +36,10 @@ The server runs automatically when configured in Claude Code. Manual invocation:
 
 ```bash
 # Default (stdio mode)
-memory-mcp-server
+memora-server
 
 # HTTP endpoint
-memory-mcp-server --transport streamable-http --host 127.0.0.1 --port 8765
+memora-server --transport streamable-http --host 127.0.0.1 --port 8765
 ```
 
 ## Claude Code Config
@@ -51,12 +51,12 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "memory": {
-      "command": "{$HOME}/miniconda/bin/memory-mcp-server",
+      "command": "{$HOME}/miniconda/bin/memora-server",
       "args": [],
       "env": {
-        "MEMORY_MCP_DB_PATH": "{$HOME}/.local/share/memory-mcp/memories.db",
-        "MEMORY_MCP_ALLOW_ANY_TAG": "1",
-        "MEMORY_MCP_GRAPH_PORT": "8765"
+        "MEMORA_DB_PATH": "{$HOME}/.local/share/memora/memories.db",
+        "MEMORA_ALLOW_ANY_TAG": "1",
+        "MEMORA_GRAPH_PORT": "8765"
       }
     }
   }
@@ -68,14 +68,14 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "memory": {
-      "command": "/opt/conda/bin/memory-mcp-server",
+      "command": "/opt/conda/bin/memora-server",
       "args": [],
       "env": {
         "AWS_ENDPOINT_URL": "https://xxxxxxx.r2.cloudflarestorage.com",
-        "MEMORY_MCP_STORAGE_URI": "s3://memories/memories.db",
-        "MEMORY_MCP_CLOUD_ENCRYPT": "true",
-        "MEMORY_MCP_ALLOW_ANY_TAG": "1",
-        "MEMORY_MCP_GRAPH_PORT": "8765"
+        "MEMORA_STORAGE_URI": "s3://memories/memories.db",
+        "MEMORA_CLOUD_ENCRYPT": "true",
+        "MEMORA_ALLOW_ANY_TAG": "1",
+        "MEMORA_GRAPH_PORT": "8765"
       }
     }
   }
@@ -88,12 +88,12 @@ Browse memories directly in Neovim with Telescope. Copy the plugin to your confi
 
 ```bash
 # For kickstart.nvim / lazy.nvim
-cp nvim/memory-mcp.lua ~/.config/nvim/lua/kickstart/plugins/
+cp nvim/memora.lua ~/.config/nvim/lua/kickstart/plugins/
 ```
 
 **Usage:** Press `<leader>sm` to open the memory browser with fuzzy search and preview.
 
-Requires: `telescope.nvim`, `plenary.nvim`, and `memory-mcp` installed in your Python environment.
+Requires: `telescope.nvim`, `plenary.nvim`, and `memora` installed in your Python environment.
 
 ## Knowledge Graph Export
 
@@ -140,7 +140,7 @@ ssh -L 8765:localhost:8765 user@remote
 ```json
 {
   "env": {
-    "MEMORY_MCP_GRAPH_PORT": "8765"
+    "MEMORA_GRAPH_PORT": "8765"
   }
 }
 ```

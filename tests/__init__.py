@@ -1,1 +1,1 @@
-"""Tests for memory-mcp."""
+"""Tests for memora."""

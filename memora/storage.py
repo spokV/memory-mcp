@@ -22,20 +22,20 @@ from .backends import StorageBackend, parse_backend_uri
 ROOT = Path(__file__).resolve().parent
 
 # Storage backend configuration
-# Priority: MEMORY_MCP_STORAGE_URI > MEMORY_MCP_DB_PATH (legacy) > default
-_storage_uri = os.getenv("MEMORY_MCP_STORAGE_URI")
+# Priority: MEMORA_STORAGE_URI > MEMORA_DB_PATH (legacy) > default
+_storage_uri = os.getenv("MEMORA_STORAGE_URI")
 if _storage_uri:
     # New URI-based configuration (supports s3://, file://, etc.)
     STORAGE_BACKEND = parse_backend_uri(_storage_uri)
 else:
-    # Legacy: Use MEMORY_MCP_DB_PATH or default local path
-    _db_path_env = os.getenv("MEMORY_MCP_DB_PATH")
+    # Legacy: Use MEMORA_DB_PATH or default local path
+    _db_path_env = os.getenv("MEMORA_DB_PATH")
     DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
     from .backends import LocalSQLiteBackend
     STORAGE_BACKEND = LocalSQLiteBackend(DB_PATH)
 
 # Embedding backend configuration
-EMBEDDING_MODEL = os.getenv("MEMORY_MCP_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
+EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
 
 # Event notification configuration
 EVENT_TRIGGER_TAG = "shared-cache"

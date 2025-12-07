@@ -1,5 +1,5 @@
 -- Memory MCP Browser for Neovim
--- Telescope picker for browsing memories from memory-mcp server
+-- Telescope picker for browsing memories from memora server
 -- Keymap: <leader>sm to open memory browser
 
 local M = {}
@@ -21,7 +21,7 @@ local function browse_memories()
   -- Get memories via Python
   local handle = io.popen([[python3 -c "
 import json
-from memory_mcp.storage import connect, list_memories
+from memora.storage import connect, list_memories
 conn = connect()
 mems = list_memories(conn, None, None, None, 0, None, None, None, None, None)
 conn.close()

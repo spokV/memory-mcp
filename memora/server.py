@@ -47,11 +47,11 @@ def _read_int_env(var_name: str, fallback: int) -> int:
 
 VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
 
-_env_transport = os.getenv("MEMORY_MCP_TRANSPORT", "stdio")
+_env_transport = os.getenv("MEMORA_TRANSPORT", "stdio")
 DEFAULT_TRANSPORT = _env_transport if _env_transport in VALID_TRANSPORTS else "stdio"
-DEFAULT_HOST = os.getenv("MEMORY_MCP_HOST", "127.0.0.1")
-DEFAULT_PORT = _read_int_env("MEMORY_MCP_PORT", 8000)
-DEFAULT_GRAPH_PORT = _read_int_env("MEMORY_MCP_GRAPH_PORT", 8765)
+DEFAULT_HOST = os.getenv("MEMORA_HOST", "127.0.0.1")
+DEFAULT_PORT = _read_int_env("MEMORA_PORT", 8000)
+DEFAULT_GRAPH_PORT = _read_int_env("MEMORA_GRAPH_PORT", 8765)
 
 mcp = FastMCP("Memory MCP Server", host=DEFAULT_HOST, port=DEFAULT_PORT)
 
@@ -1235,24 +1235,24 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--transport",
         choices=sorted(VALID_TRANSPORTS),
         default=DEFAULT_TRANSPORT,
-        help="MCP transport to use (defaults to env MEMORY_MCP_TRANSPORT or 'stdio')",
+        help="MCP transport to use (defaults to env MEMORA_TRANSPORT or 'stdio')",
     )
     parser.add_argument(
         "--host",
         default=DEFAULT_HOST,
-        help="Host interface for HTTP transports (defaults to env MEMORY_MCP_HOST or 127.0.0.1)",
+        help="Host interface for HTTP transports (defaults to env MEMORA_HOST or 127.0.0.1)",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=DEFAULT_PORT,
-        help="Port for HTTP transports (defaults to env MEMORY_MCP_PORT or 8000)",
+        help="Port for HTTP transports (defaults to env MEMORA_PORT or 8000)",
     )
     parser.add_argument(
         "--graph-port",
         type=int,
         default=DEFAULT_GRAPH_PORT,
-        help="Port for graph visualization server (defaults to env MEMORY_MCP_GRAPH_PORT or 8765)",
+        help="Port for graph visualization server (defaults to env MEMORA_GRAPH_PORT or 8765)",
     )
     parser.add_argument(
         "--no-graph",

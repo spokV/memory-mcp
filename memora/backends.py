@@ -1,6 +1,6 @@
 """Storage backend abstraction for pluggable cloud and local storage.
 
-This module provides a backend system that allows memory-mcp to transparently
+This module provides a backend system that allows memora to transparently
 use different storage backends (local SQLite, cloud-synced SQLite, etc.) while
 keeping the same API surface.
 """
@@ -142,7 +142,7 @@ class CloudSQLiteBackend(StorageBackend):
 
         Args:
             cloud_url: S3 URL (e.g., s3://bucket/path/to/db.sqlite)
-            cache_dir: Local cache directory (default: ~/.cache/memory_mcp)
+            cache_dir: Local cache directory (default: ~/.cache/memora)
             encrypt: Enable server-side encryption on upload
             compress: Compress database before upload
             auto_sync: Automatically sync before/after operations
@@ -169,7 +169,7 @@ class CloudSQLiteBackend(StorageBackend):
 
         # Set up cache directory
         if cache_dir is None:
-            cache_dir = Path.home() / ".cache" / "memory_mcp"
+            cache_dir = Path.home() / ".cache" / "memora"
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -362,7 +362,7 @@ class CloudSQLiteBackend(StorageBackend):
                             )
                             raise ConflictError(
                                 f"Database was modified by another process. "
-                                f"Run 'memory-mcp-server sync-pull' to get latest changes."
+                                f"Run 'memora-server sync-pull' to get latest changes."
                             )
                     except ClientError as e:
                         if e.response["Error"]["Code"] != "404":
@@ -501,9 +501,9 @@ def parse_backend_uri(uri: str) -> StorageBackend:
     """
     if uri.startswith("s3://"):
         # Parse cloud storage options from environment
-        encrypt = os.getenv("MEMORY_MCP_CLOUD_ENCRYPT", "").lower() in ("1", "true", "yes")
-        compress = os.getenv("MEMORY_MCP_CLOUD_COMPRESS", "").lower() in ("1", "true", "yes")
-        cache_dir_env = os.getenv("MEMORY_MCP_CACHE_DIR")
+        encrypt = os.getenv("MEMORA_CLOUD_ENCRYPT", "").lower() in ("1", "true", "yes")
+        compress = os.getenv("MEMORA_CLOUD_COMPRESS", "").lower() in ("1", "true", "yes")
+        cache_dir_env = os.getenv("MEMORA_CACHE_DIR")
         cache_dir = Path(cache_dir_env) if cache_dir_env else None
 
         return CloudSQLiteBackend(
