@@ -1,5 +1,9 @@
 # Memora
 
+## Session Start
+
+At the beginning of each session, proactively search memories for context related to the current project or working directory using `memory_hybrid_search`. Briefly summarize relevant findings to establish context.
+
 ## Memory Search
 
 When the user asks about past work, stored knowledge, or previously discussed topics:

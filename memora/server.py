@@ -473,11 +473,22 @@ async def memory_delete_batch(ids: List[int]) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def memory_get(memory_id: int) -> Dict[str, Any]:
-    """Retrieve a single memory by id."""
+async def memory_get(memory_id: int, include_images: bool = False) -> Dict[str, Any]:
+    """Retrieve a single memory by id.
+
+    Args:
+        memory_id: ID of the memory to retrieve
+        include_images: If False, strip image data from metadata to reduce response size
+    """
     record = _get_memory(memory_id)
     if not record:
         return {"error": "not_found", "id": memory_id}
+
+    if not include_images and record.get("metadata", {}).get("images"):
+        record["metadata"]["images"] = [
+            {"caption": img.get("caption", "")} for img in record["metadata"]["images"]
+        ]
+
     return {"memory": record}
 
 
