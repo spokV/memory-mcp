@@ -707,6 +707,109 @@ async def memory_export() -> Dict[str, Any]:
     return {"count": len(memories), "memories": memories}
 
 
+@mcp.tool()
+async def memory_migrate_images(dry_run: bool = False) -> Dict[str, Any]:
+    """Migrate existing base64 images to R2 storage.
+
+    Scans all memories and uploads any base64-encoded images to R2,
+    replacing the data URIs with R2 URLs.
+
+    Args:
+        dry_run: If True, only report what would be migrated without making changes
+
+    Returns:
+        Dictionary with migration results including count of migrated images
+    """
+    return _migrate_images_to_r2(dry_run=dry_run)
+
+
+@_with_connection(writes=True)
+def _migrate_images_to_r2(conn, dry_run: bool = False) -> Dict[str, Any]:
+    """Migrate all base64 images to R2 storage."""
+    import json as json_lib
+    from .image_storage import get_image_storage_instance, parse_data_uri
+    from .storage import update_memory
+
+    image_storage = get_image_storage_instance()
+    if not image_storage:
+        return {
+            "error": "r2_not_configured",
+            "message": "R2 storage is not configured. Set MEMORA_STORAGE_URI to s3:// and configure AWS credentials.",
+        }
+
+    # Find memories with base64 images
+    rows = conn.execute(
+        "SELECT id, metadata FROM memories WHERE metadata LIKE '%data:image%'"
+    ).fetchall()
+
+    if not rows:
+        return {"migrated_memories": 0, "migrated_images": 0, "message": "No base64 images found"}
+
+    results = {
+        "dry_run": dry_run,
+        "memories_scanned": len(rows),
+        "migrated_memories": 0,
+        "migrated_images": 0,
+        "errors": [],
+    }
+
+    for row in rows:
+        memory_id = row["id"]
+        try:
+            metadata = json_lib.loads(row["metadata"]) if row["metadata"] else {}
+        except json_lib.JSONDecodeError:
+            continue
+
+        images = metadata.get("images", [])
+        if not isinstance(images, list):
+            continue
+
+        updated = False
+        for idx, img in enumerate(images):
+            if not isinstance(img, dict):
+                continue
+            src = img.get("src", "")
+            if not src.startswith("data:image"):
+                continue
+
+            if dry_run:
+                results["migrated_images"] += 1
+                updated = True
+                continue
+
+            # Upload to R2
+            try:
+                image_bytes, content_type = parse_data_uri(src)
+                new_url = image_storage.upload_image(
+                    image_data=image_bytes,
+                    content_type=content_type,
+                    memory_id=memory_id,
+                    image_index=idx,
+                )
+                img["src"] = new_url
+                results["migrated_images"] += 1
+                updated = True
+            except Exception as e:
+                results["errors"].append({
+                    "memory_id": memory_id,
+                    "image_index": idx,
+                    "error": str(e),
+                })
+
+        if updated:
+            results["migrated_memories"] += 1
+            if not dry_run:
+                # Update the memory with new URLs
+                update_memory(conn, memory_id, metadata=metadata)
+
+    if dry_run:
+        results["message"] = f"Would migrate {results['migrated_images']} images from {results['migrated_memories']} memories"
+    else:
+        results["message"] = f"Migrated {results['migrated_images']} images from {results['migrated_memories']} memories"
+
+    return results
+
+
 @_with_connection
 def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Dict[str, Any]:
     """Generate HTML knowledge graph visualization."""
@@ -1207,6 +1310,7 @@ def _start_graph_server(host: str, port: int) -> None:
 
     from starlette.applications import Starlette
     from starlette.routing import Route
+    from starlette.responses import Response
 
     async def graph_handler(request: Request):
         """Serve the knowledge graph visualization."""
@@ -1219,7 +1323,44 @@ def _start_graph_server(host: str, port: int) -> None:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    app = Starlette(routes=[Route("/graph", graph_handler)])
+    async def r2_image_proxy(request: Request):
+        """Proxy images from R2 storage."""
+        try:
+            from .image_storage import get_image_storage_instance
+
+            image_storage = get_image_storage_instance()
+            if not image_storage:
+                return JSONResponse({"error": "R2 not configured"}, status_code=503)
+
+            # Get the image key from the path (e.g., /r2/images/49/...)
+            key = request.path_params.get("path", "")
+            if not key:
+                return JSONResponse({"error": "No path provided"}, status_code=400)
+
+            # Fetch from R2
+            try:
+                response = image_storage.s3_client.get_object(
+                    Bucket=image_storage.bucket,
+                    Key=key,
+                )
+                image_data = response["Body"].read()
+                content_type = response.get("ContentType", "image/jpeg")
+
+                return Response(
+                    content=image_data,
+                    media_type=content_type,
+                    headers={"Cache-Control": "public, max-age=86400"},  # Cache for 1 day
+                )
+            except Exception as e:
+                return JSONResponse({"error": f"Image not found: {e}"}, status_code=404)
+
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    app = Starlette(routes=[
+        Route("/graph", graph_handler),
+        Route("/r2/{path:path}", r2_image_proxy),
+    ])
 
     def run_server():
         import uvicorn
@@ -1295,6 +1436,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Show storage backend information"
     )
 
+    # Subcommand: migrate-images
+    migrate_parser = subparsers.add_parser(
+        "migrate-images",
+        help="Migrate base64 images to R2 storage"
+    )
+    migrate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be migrated without making changes"
+    )
+
     args = parser.parse_args(argv)
 
     # Handle subcommands
@@ -1306,6 +1458,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         _handle_sync_status()
     elif args.command == "info":
         _handle_info()
+    elif args.command == "migrate-images":
+        _handle_migrate_images(dry_run=args.dry_run)
     else:
         # Default: start server
         mcp.settings.host = args.host
@@ -1407,6 +1561,24 @@ def _handle_info() -> None:
 
     info = STORAGE_BACKEND.get_info()
     print(json.dumps(info, indent=2, default=str))
+
+
+def _handle_migrate_images(dry_run: bool = False) -> None:
+    """Handle migrate-images command."""
+    import json
+
+    print(f"{'[DRY RUN] ' if dry_run else ''}Migrating base64 images to R2 storage...")
+
+    result = _migrate_images_to_r2(dry_run=dry_run)
+
+    if "error" in result:
+        print(f"Error: {result['message']}")
+        return
+
+    print(json.dumps(result, indent=2))
+
+    if result.get("errors"):
+        print(f"\nWarning: {len(result['errors'])} errors occurred during migration")
 
 
 if __name__ == "__main__":

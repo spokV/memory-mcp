@@ -322,19 +322,49 @@ def _normalise_tasks(tasks: Any) -> List[Dict[str, Any]]:
     return normalised
 
 
-def _encode_image_to_data_uri(src: str, max_size: int = 200, quality: int = 70) -> str:
-    """Convert a file path to a base64 data URI, resizing large images.
+def _process_image_for_storage(
+    src: str,
+    memory_id: Optional[int] = None,
+    image_index: int = 0,
+    max_size: int = 1200,
+    quality: int = 85,
+) -> str:
+    """Process image: resize, compress, and upload to R2 or encode as data URI.
 
     Args:
-        src: Image source (file path, file:// URI, or existing data URI/URL)
-        max_size: Maximum dimension (width or height) in pixels. Default 200 (thumbnail).
-        quality: JPEG quality (1-100). Default 70.
+        src: Image source (file path, file:// URI, data URI, or existing URL)
+        memory_id: ID of the memory (required for R2 upload)
+        image_index: Index of the image within the memory
+        max_size: Maximum dimension (width or height) in pixels. Default 1200 (R2 storage).
+        quality: JPEG quality (1-100). Default 85.
 
     Returns:
-        Base64 data URI string
+        R2 URL if cloud storage configured, otherwise base64 data URI
     """
-    # Already a data URI or URL - return as-is
-    if src.startswith('data:') or src.startswith('http://') or src.startswith('https://'):
+    from .image_storage import get_image_storage_instance, parse_data_uri
+
+    image_storage = get_image_storage_instance()
+
+    # Already an R2 reference or HTTP(S) URL - return as-is
+    if src.startswith('r2://') or src.startswith('http://') or src.startswith('https://'):
+        return src
+
+    # Handle existing data URI - upload to R2 if configured
+    if src.startswith('data:'):
+        if image_storage and memory_id is not None:
+            try:
+                image_bytes, content_type = parse_data_uri(src)
+                return image_storage.upload_image(
+                    image_data=image_bytes,
+                    content_type=content_type,
+                    memory_id=memory_id,
+                    image_index=image_index,
+                )
+            except Exception as e:
+                # If R2 upload fails, keep the data URI
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to upload data URI to R2: {e}")
+                return src
         return src
 
     # Handle file:// URIs
@@ -380,7 +410,24 @@ def _encode_image_to_data_uri(src: str, max_size: int = 200, quality: int = 70) 
             img.save(buffer, format='JPEG', quality=quality, optimize=True)
             mime_type = 'image/jpeg'
 
-        b64 = base64.b64encode(buffer.getvalue()).decode('ascii')
+        image_bytes = buffer.getvalue()
+
+        # Upload to R2 if configured
+        if image_storage and memory_id is not None:
+            try:
+                return image_storage.upload_image(
+                    image_data=image_bytes,
+                    content_type=mime_type,
+                    memory_id=memory_id,
+                    image_index=image_index,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to upload image to R2: {e}")
+                # Fall through to base64 encoding
+
+        # Fallback: encode as base64 data URI
+        b64 = base64.b64encode(image_bytes).decode('ascii')
         return f'data:{mime_type};base64,{b64}'
 
     except Exception:
@@ -389,12 +436,37 @@ def _encode_image_to_data_uri(src: str, max_size: int = 200, quality: int = 70) 
         if mime_type is None or not mime_type.startswith('image/'):
             mime_type = 'image/png'
         with open(path, 'rb') as f:
-            b64 = base64.b64encode(f.read()).decode('ascii')
+            raw_bytes = f.read()
+
+        # Try R2 upload for raw file
+        if image_storage and memory_id is not None:
+            try:
+                return image_storage.upload_image(
+                    image_data=raw_bytes,
+                    content_type=mime_type,
+                    memory_id=memory_id,
+                    image_index=image_index,
+                )
+            except Exception:
+                pass  # Fall through to base64
+
+        b64 = base64.b64encode(raw_bytes).decode('ascii')
         return f'data:{mime_type};base64,{b64}'
 
 
-def _process_metadata_images(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """Process images in metadata, encoding local files to data URIs."""
+def _process_metadata_images(
+    metadata: Dict[str, Any],
+    memory_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Process images in metadata, uploading to R2 or encoding as data URIs.
+
+    Args:
+        metadata: Memory metadata dict potentially containing 'images' list
+        memory_id: ID of the memory (required for R2 upload)
+
+    Returns:
+        Metadata dict with processed image sources
+    """
     if 'images' not in metadata:
         return metadata
 
@@ -403,10 +475,14 @@ def _process_metadata_images(metadata: Dict[str, Any]) -> Dict[str, Any]:
         return metadata
 
     processed_images = []
-    for img in images:
+    for idx, img in enumerate(images):
         if isinstance(img, dict) and 'src' in img:
             processed_img = dict(img)
-            processed_img['src'] = _encode_image_to_data_uri(img['src'])
+            processed_img['src'] = _process_image_for_storage(
+                img['src'],
+                memory_id=memory_id,
+                image_index=idx,
+            )
             processed_images.append(processed_img)
         else:
             processed_images.append(img)
@@ -416,13 +492,50 @@ def _process_metadata_images(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _prepare_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _prepare_metadata(
+    metadata: Optional[Dict[str, Any]],
+    memory_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Prepare metadata for storage, processing images if present.
+
+    Args:
+        metadata: Raw metadata dict
+        memory_id: ID of the memory (required for R2 image upload)
+
+    Returns:
+        Prepared metadata dict
+    """
     if metadata is None:
         return None
     if not isinstance(metadata, Mapping):
         raise ValueError("Metadata must be a mapping")
-    processed = _process_metadata_images(dict(metadata))
+    processed = _process_metadata_images(dict(metadata), memory_id=memory_id)
     return _build_metadata_dict(processed)
+
+
+def _expand_image_urls(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand r2:// image references to full URLs."""
+    if 'images' not in metadata:
+        return metadata
+
+    images = metadata.get('images')
+    if not isinstance(images, list):
+        return metadata
+
+    from .image_storage import expand_r2_url
+
+    expanded_images = []
+    for img in images:
+        if isinstance(img, dict) and 'src' in img:
+            expanded_img = dict(img)
+            expanded_img['src'] = expand_r2_url(img['src'])
+            expanded_images.append(expanded_img)
+        else:
+            expanded_images.append(img)
+
+    result = dict(metadata)
+    result['images'] = expanded_images
+    return result
 
 
 def _present_metadata(metadata: Optional[Any]) -> Optional[Any]:
@@ -430,7 +543,11 @@ def _present_metadata(metadata: Optional[Any]) -> Optional[Any]:
         return None
     if isinstance(metadata, Mapping):
         try:
-            return _build_metadata_dict(metadata)
+            result = _build_metadata_dict(metadata)
+            # Expand r2:// image URLs to full URLs
+            if result and 'images' in result:
+                result = _expand_image_urls(result)
+            return result
         except ValueError:
             # Surface legacy/invalid metadata without breaking callers
             return dict(metadata)
@@ -929,20 +1046,48 @@ def add_memory(
     metadata: Optional[Dict[str, Any]] = None,
     tags: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    prepared_metadata = _prepare_metadata(metadata)
     validated_tags = _validate_tags(tags)
     _enforce_tag_whitelist(validated_tags)
-    metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
     tags_json = json.dumps(validated_tags, ensure_ascii=False)
-    cur = conn.execute(
-        "INSERT INTO memories (content, metadata, tags) VALUES (?, ?, ?)",
-        (
-            content,
-            metadata_json,
-            tags_json,
-        ),
+
+    # Two-pass approach for images:
+    # 1. Insert memory first to get ID (needed for R2 image keys)
+    # 2. Process metadata with memory_id, then update the record
+
+    # Check if metadata has images that need processing
+    has_images = (
+        metadata is not None
+        and isinstance(metadata.get('images'), list)
+        and len(metadata.get('images', [])) > 0
     )
-    memory_id = cur.lastrowid
+
+    if has_images:
+        # First pass: insert without processed images to get memory_id
+        cur = conn.execute(
+            "INSERT INTO memories (content, metadata, tags) VALUES (?, ?, ?)",
+            (content, None, tags_json),
+        )
+        memory_id = cur.lastrowid
+
+        # Second pass: process metadata with memory_id (uploads images to R2)
+        prepared_metadata = _prepare_metadata(metadata, memory_id=memory_id)
+        metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
+
+        # Update the record with processed metadata
+        conn.execute(
+            "UPDATE memories SET metadata = ? WHERE id = ?",
+            (metadata_json, memory_id),
+        )
+    else:
+        # No images - single pass
+        prepared_metadata = _prepare_metadata(metadata)
+        metadata_json = json.dumps(prepared_metadata, ensure_ascii=False) if prepared_metadata else None
+        cur = conn.execute(
+            "INSERT INTO memories (content, metadata, tags) VALUES (?, ?, ?)",
+            (content, metadata_json, tags_json),
+        )
+        memory_id = cur.lastrowid
+
     _fts_upsert(conn, memory_id, content, metadata_json, tags_json)
     vector = _compute_embedding(content, prepared_metadata, validated_tags)
     _upsert_embedding(conn, memory_id, vector)
@@ -1087,6 +1232,23 @@ def update_memory(
 
 
 def delete_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
+    # Clean up R2 images before deleting memory
+    from .image_storage import get_image_storage_instance
+    import logging
+
+    image_storage = get_image_storage_instance()
+    if image_storage:
+        try:
+            deleted_images = image_storage.delete_memory_images(memory_id)
+            if deleted_images > 0:
+                logging.getLogger(__name__).info(
+                    f"Deleted {deleted_images} R2 images for memory {memory_id}"
+                )
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                f"Failed to delete R2 images for memory {memory_id}: {e}"
+            )
+
     _fts_delete(conn, memory_id)
     _delete_embedding(conn, memory_id)
     _clear_crossrefs(conn, memory_id)
@@ -1100,6 +1262,21 @@ def delete_memories(conn: sqlite3.Connection, memory_ids: Iterable[int]) -> int:
     ids = list(memory_ids)
     if not ids:
         return 0
+
+    # Clean up R2 images for all memories
+    from .image_storage import get_image_storage_instance
+    import logging
+
+    image_storage = get_image_storage_instance()
+    if image_storage:
+        for memory_id in ids:
+            try:
+                image_storage.delete_memory_images(memory_id)
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"Failed to delete R2 images for memory {memory_id}: {e}"
+                )
+
     for memory_id in ids:
         _fts_delete(conn, memory_id)
         _delete_embedding(conn, memory_id)
