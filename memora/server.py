@@ -708,6 +708,77 @@ async def memory_export() -> Dict[str, Any]:
 
 
 @mcp.tool()
+async def memory_upload_image(
+    file_path: str,
+    memory_id: int,
+    image_index: int = 0,
+    caption: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Upload an image file directly to R2 storage.
+
+    Uploads a local image file to R2 and returns the r2:// reference URL
+    that can be used in memory metadata.
+
+    Args:
+        file_path: Absolute path to the image file to upload
+        memory_id: Memory ID this image belongs to (used for organizing in R2)
+        image_index: Index of image within the memory (default: 0)
+        caption: Optional caption for the image
+
+    Returns:
+        Dictionary with r2_url (the r2:// reference) and image object ready for metadata
+    """
+    import os
+    import mimetypes
+
+    from .image_storage import get_image_storage_instance
+
+    image_storage = get_image_storage_instance()
+    if not image_storage:
+        return {
+            "error": "r2_not_configured",
+            "message": "R2 storage is not configured. Set MEMORA_STORAGE_URI to s3:// and configure AWS credentials.",
+        }
+
+    # Validate file exists
+    if not os.path.isfile(file_path):
+        return {"error": "file_not_found", "message": f"File not found: {file_path}"}
+
+    # Determine content type
+    content_type, _ = mimetypes.guess_type(file_path)
+    if not content_type or not content_type.startswith("image/"):
+        content_type = "image/png"  # Default to PNG for unknown types
+
+    try:
+        # Read file and upload
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+
+        r2_url = image_storage.upload_image(
+            image_data=image_data,
+            content_type=content_type,
+            memory_id=memory_id,
+            image_index=image_index,
+        )
+
+        # Build image object for metadata
+        image_obj = {"src": r2_url}
+        if caption:
+            image_obj["caption"] = caption
+
+        return {
+            "r2_url": r2_url,
+            "image": image_obj,
+            "file_path": file_path,
+            "content_type": content_type,
+            "size_bytes": len(image_data),
+        }
+
+    except Exception as e:
+        return {"error": "upload_failed", "message": str(e)}
+
+
+@mcp.tool()
 async def memory_migrate_images(dry_run: bool = False) -> Dict[str, Any]:
     """Migrate existing base64 images to R2 storage.
 
@@ -843,12 +914,28 @@ def _export_graph_html(conn, output_path: Optional[str], min_score: float) -> Di
             "color": tag_colors[primary_tag],
         })
 
+        # Expand R2 URLs in metadata for graph visualization
+        meta = m.get("metadata") or {}
+        if meta.get("images"):
+            from .image_storage import expand_r2_url
+            expanded_images = []
+            for img in meta["images"]:
+                if isinstance(img, dict) and img.get("src"):
+                    src = img["src"]
+                    # Expand r2:// or /r2/ URLs to full URLs
+                    if src.startswith("r2://") or src.startswith("/r2/"):
+                        src = expand_r2_url(src.replace("/r2/", "r2://") if src.startswith("/r2/") else src, use_proxy=True)
+                    expanded_images.append({**img, "src": src})
+                else:
+                    expanded_images.append(img)
+            meta = {**meta, "images": expanded_images}
+
         memories_data[m["id"]] = {
             "id": m["id"],
             "tags": tags,
             "created": m.get("created_at", ""),
             "content": content,
-            "metadata": m.get("metadata") or {}
+            "metadata": meta
         }
 
     edges = []
