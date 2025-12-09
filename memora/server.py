@@ -1385,6 +1385,129 @@ def _is_port_in_use(host: str, port: int) -> bool:
             return True
 
 
+def _get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> dict:
+    """Get graph nodes, edges, and metadata for API response.
+
+    Args:
+        min_score: Minimum similarity score for edges
+        rebuild: If True, rebuild crossrefs (slow). If False, use existing crossrefs.
+    """
+    import json as json_lib
+    from .storage import list_memories, get_crossrefs, rebuild_crossrefs
+
+    conn = connect()
+    try:
+        memories = list_memories(conn, None, None, None, 0, None, None, None, None, None)
+        if not memories:
+            return {"error": "no_memories", "message": "No memories to visualize"}
+
+        # Only rebuild crossrefs if explicitly requested (expensive operation)
+        if rebuild:
+            rebuild_crossrefs(conn)
+
+        colors = ["#58a6ff", "#f78166", "#a371f7", "#7ee787", "#ffa657", "#ff7b72", "#79c0ff", "#d2a8ff"]
+        tag_colors = {}
+
+        nodes = []
+        tag_to_nodes = {}
+        section_to_nodes = {}
+        path_to_nodes = {}
+
+        for m in memories:
+            tags = m.get("tags", [])
+            primary_tag = tags[0] if tags else "untagged"
+            if primary_tag not in tag_colors:
+                tag_colors[primary_tag] = colors[len(tag_colors) % len(colors)]
+
+            content = m["content"]
+            label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
+
+            nodes.append({
+                "id": m["id"],
+                "label": label + "..." if len(content) > 35 else label,
+                "title": f"Memory #{m['id']}",
+                "color": tag_colors[primary_tag],
+            })
+
+            # Build tag mapping
+            for tag in tags:
+                if tag not in tag_to_nodes:
+                    tag_to_nodes[tag] = []
+                tag_to_nodes[tag].append(m["id"])
+
+            # Build section mapping
+            meta = m.get("metadata") or {}
+            section = meta.get("section", "Uncategorized")
+            subsection = meta.get("subsection", "")
+
+            if section not in section_to_nodes:
+                section_to_nodes[section] = []
+            section_to_nodes[section].append(m["id"])
+
+            if subsection:
+                parts = subsection.split("/")
+                for i in range(len(parts)):
+                    partial_path = "/".join(parts[:i+1])
+                    full_key = f"{section}/{partial_path}"
+                    if full_key not in path_to_nodes:
+                        path_to_nodes[full_key] = []
+                    path_to_nodes[full_key].append(m["id"])
+
+        edges = []
+        seen = set()
+        for m in memories:
+            for ref in get_crossrefs(conn, m["id"]):
+                edge_key = tuple(sorted([m["id"], ref["id"]]))
+                if edge_key not in seen and ref.get("score", 0) > min_score:
+                    seen.add(edge_key)
+                    edges.append({"from": m["id"], "to": ref["id"]})
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "tagColors": tag_colors,
+            "tagToNodes": tag_to_nodes,
+            "sectionToNodes": section_to_nodes,
+            "subsectionToNodes": path_to_nodes,
+        }
+    finally:
+        conn.close()
+
+
+def _get_memory_for_api(memory_id: int) -> dict:
+    """Get a single memory with expanded R2 URLs for API response."""
+    conn = connect()
+    try:
+        m = get_memory(conn, memory_id)
+        if not m:
+            return {"error": "not_found"}
+
+        # Expand R2 URLs in metadata
+        meta = m.get("metadata") or {}
+        if meta.get("images"):
+            from .image_storage import expand_r2_url
+            expanded_images = []
+            for img in meta["images"]:
+                if isinstance(img, dict) and img.get("src"):
+                    src = img["src"]
+                    if src.startswith("r2://") or src.startswith("/r2/"):
+                        src = expand_r2_url(src.replace("/r2/", "r2://") if src.startswith("/r2/") else src, use_proxy=True)
+                    expanded_images.append({**img, "src": src})
+                else:
+                    expanded_images.append(img)
+            meta = {**meta, "images": expanded_images}
+
+        return {
+            "id": m["id"],
+            "tags": m.get("tags", []),
+            "created": m.get("created_at", ""),
+            "content": m["content"],
+            "metadata": meta
+        }
+    finally:
+        conn.close()
+
+
 def _start_graph_server(host: str, port: int) -> None:
     """Start background HTTP server for graph visualization."""
     import threading
@@ -1399,14 +1522,351 @@ def _start_graph_server(host: str, port: int) -> None:
     from starlette.routing import Route
     from starlette.responses import Response
 
+    # Static SPA HTML - fetches data from API
+    GRAPH_HTML = '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Memory Knowledge Graph</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; }
+        #graph { flex: 1; height: 100%; }
+        #panel { width: 400px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
+        #panel.active { display: block; }
+        #panel h2 { color: #58a6ff; margin-bottom: 10px; font-size: 16px; }
+        #panel .tags { margin-bottom: 15px; }
+        #panel .tag { display: inline-block; background: #30363d; padding: 3px 8px; border-radius: 12px; font-size: 12px; margin: 2px; cursor: pointer; }
+        #panel .tag:hover { background: #484f58; }
+        #panel .meta { color: #8b949e; font-size: 12px; margin-bottom: 15px; }
+        #panel .content { font-size: 13px; line-height: 1.6; background: #0d1117; padding: 15px; border-radius: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }
+        #panel .content h1, #panel .content h2, #panel .content h3 { color: #58a6ff; margin: 16px 0 8px 0; }
+        #panel .content h1 { font-size: 1.4em; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
+        #panel .content h2 { font-size: 1.2em; }
+        #panel .content h3 { font-size: 1.1em; }
+        #panel .content p { margin: 8px 0; }
+        #panel .content ul, #panel .content ol { margin: 8px 0 8px 20px; }
+        #panel .content li { margin: 4px 0; }
+        #panel .content code { background: #30363d; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+        #panel .content pre { background: #0d1117; border: 1px solid #30363d; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+        #panel .content pre code { background: none; padding: 0; }
+        #panel .content a { color: #58a6ff; }
+        #panel .content table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+        #panel .content th, #panel .content td { border: 1px solid #30363d; padding: 6px 10px; text-align: left; }
+        #panel .content th { background: #21262d; }
+        #panel .content blockquote { border-left: 3px solid #30363d; padding-left: 12px; margin: 8px 0; color: #8b949e; }
+        #panel .content .mermaid { background: #161b22; padding: 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+        #panel .content .memory-images { margin-top: 16px; border-top: 1px solid #30363d; padding-top: 16px; }
+        #panel .content .memory-image { margin: 8px 0; }
+        #panel .content .memory-image img { max-width: 100%; border-radius: 6px; border: 1px solid #30363d; }
+        #panel .content .memory-image .caption { font-size: 11px; color: #8b949e; margin-top: 4px; text-align: center; }
+        #panel .content strong { color: #f0f6fc; }
+        #panel .close { position: absolute; top: 10px; right: 15px; cursor: pointer; font-size: 20px; color: #8b949e; }
+        #panel .close:hover { color: #fff; }
+        #resize-handle { width: 6px; background: #30363d; cursor: ew-resize; display: none; }
+        #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
+        #resize-handle.active { display: block; }
+        #legend { position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }
+        .legend-item { margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+        .legend-item:hover { background: rgba(255,255,255,0.1); }
+        .legend-item.active { background: rgba(88,166,255,0.3); }
+        .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
+        #legend .reset { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }
+        #legend .reset:hover { text-decoration: underline; }
+        #sections { position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-height: 40vh; overflow-y: auto; white-space: nowrap; }
+        #sections b { display: block; margin-bottom: 8px; }
+        .section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }
+        .section-item:hover { background: rgba(255,255,255,0.1); }
+        .section-item.active { background: rgba(126,231,135,0.3); }
+        .subsection-item { margin: 2px 0 2px 8px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }
+        .subsection-item:hover { background: rgba(255,255,255,0.1); }
+        .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
+        #help { position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 16px; }
+        #search-box { position: absolute; top: 10px; right: 10px; background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
+        #search-box input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; width: 200px; }
+        #search-box input:focus { outline: none; border-color: #58a6ff; }
+    </style>
+</head>
+<body>
+    <div id="graph"><div id="loading">Loading memories...</div></div>
+    <div id="resize-handle"></div>
+    <div id="panel">
+        <span class="close" onclick="closePanel()">&times;</span>
+        <h2 id="panel-title">Memory #</h2>
+        <div class="meta" id="panel-meta"></div>
+        <div class="tags" id="panel-tags"></div>
+        <div class="content" id="panel-content"></div>
+    </div>
+    <div id="legend"><b>Tags</b><div id="legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
+    <div id="sections"><b>Sections</b><div id="section-items"></div></div>
+    <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search</div>
+    <script>
+        var graphData = null;
+        var nodes, edges, network;
+        var currentFilter = null;
+        var memoryCache = {};
+
+        // Configure marked for GitHub-flavored markdown
+        marked.setOptions({ breaks: true, gfm: true });
+
+        // Initialize mermaid with dark theme
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            themeVariables: {
+                primaryColor: '#58a6ff',
+                primaryTextColor: '#c9d1d9',
+                primaryBorderColor: '#30363d',
+                lineColor: '#8b949e',
+                secondaryColor: '#21262d',
+                tertiaryColor: '#161b22'
+            }
+        });
+
+        async function loadGraph() {
+            try {
+                const response = await fetch('/api/graph');
+                graphData = await response.json();
+                if (graphData.error) {
+                    document.getElementById('loading').textContent = graphData.message || 'No memories found';
+                    return;
+                }
+                initGraph();
+            } catch (e) {
+                document.getElementById('loading').textContent = 'Error loading graph: ' + e.message;
+            }
+        }
+
+        function initGraph() {
+            document.getElementById('loading').remove();
+
+            // Build legend
+            var legendHtml = '';
+            var tagEntries = Object.entries(graphData.tagColors).slice(0, 12);
+            for (var [tag, color] of tagEntries) {
+                legendHtml += '<div class="legend-item" data-tag="' + tag + '" onclick="filterByTag(\\'' + tag + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + tag + '</div>';
+            }
+            document.getElementById('legend-items').innerHTML = legendHtml;
+
+            // Build sections
+            var sectionsHtml = '';
+            for (var [section, nodeIds] of Object.entries(graphData.sectionToNodes)) {
+                sectionsHtml += '<div class="section-item" data-section="' + section + '" onclick="filterBySection(\\'' + section + '\\')">' + section + ' (' + nodeIds.length + ')</div>';
+                var sectionPaths = Object.keys(graphData.subsectionToNodes).filter(k => k.startsWith(section + '/')).sort();
+                var rendered = new Set();
+                for (var fullPath of sectionPaths) {
+                    var subPath = fullPath.slice(section.length + 1);
+                    var parts = subPath.split('/');
+                    for (var i = 0; i < parts.length; i++) {
+                        var partial = parts.slice(0, i + 1).join('/');
+                        var renderKey = section + '/' + partial;
+                        if (!rendered.has(renderKey)) {
+                            rendered.add(renderKey);
+                            var indent = '&nbsp;&nbsp;'.repeat(i);
+                            var count = (graphData.subsectionToNodes[renderKey] || []).length;
+                            sectionsHtml += '<div class="subsection-item" data-subsection="' + renderKey + '" onclick="filterBySubsection(\\'' + renderKey + '\\')" style="padding-left:' + (8 + i*12) + 'px;">' + indent + '\\u2514 ' + parts[i] + ' (' + count + ')</div>';
+                        }
+                    }
+                }
+            }
+            document.getElementById('section-items').innerHTML = sectionsHtml;
+
+            // Init vis.js
+            nodes = new vis.DataSet(graphData.nodes);
+            edges = new vis.DataSet(graphData.edges);
+            var container = document.getElementById('graph');
+            var data = { nodes: nodes, edges: edges };
+            var options = {
+                nodes: { shape: 'dot', size: 16, font: { color: '#c9d1d9', size: 11 }, borderWidth: 2 },
+                edges: { color: { color: '#30363d', opacity: 0.6 }, smooth: { type: 'continuous' } },
+                physics: { barnesHut: { gravitationalConstant: -2500, springLength: 120, damping: 0.3 } },
+                interaction: { hover: true, tooltipDelay: 100 }
+            };
+            network = new vis.Network(container, data, options);
+
+            network.on('click', async function(params) {
+                if (params.nodes.length > 0) {
+                    var nodeId = params.nodes[0];
+                    await showMemory(nodeId);
+                }
+            });
+        }
+
+        async function showMemory(nodeId) {
+            // Fetch memory content (with caching)
+            if (!memoryCache[nodeId]) {
+                try {
+                    const response = await fetch('/api/memories/' + nodeId);
+                    memoryCache[nodeId] = await response.json();
+                } catch (e) {
+                    console.error('Error fetching memory:', e);
+                    return;
+                }
+            }
+            var mem = memoryCache[nodeId];
+            if (mem.error) return;
+
+            document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
+            document.getElementById('panel-meta').textContent = 'Created: ' + mem.created;
+            document.getElementById('panel-tags').innerHTML = mem.tags.map(t => '<span class="tag" onclick="filterByTag(\\'' + t + '\\'); event.stopPropagation();">' + t + '</span>').join('');
+            document.getElementById('panel-content').innerHTML = renderMarkdown(mem.content);
+            await renderMermaidBlocks();
+            document.getElementById('panel-content').innerHTML += renderImages(mem.metadata);
+            document.getElementById('panel').classList.add('active');
+            document.getElementById('resize-handle').classList.add('active');
+        }
+
+        function renderMarkdown(text) {
+            var renderer = new marked.Renderer();
+            renderer.link = function(href, title, text) {
+                return '<a href="' + href + '" target="_blank">' + text + '</a>';
+            };
+            return marked.parse(text, { renderer: renderer });
+        }
+
+        async function renderMermaidBlocks() {
+            var blocks = document.querySelectorAll('#panel-content pre code.language-mermaid');
+            for (var block of blocks) {
+                var container = document.createElement('div');
+                container.className = 'mermaid';
+                container.textContent = block.textContent;
+                block.parentElement.replaceWith(container);
+            }
+            if (blocks.length > 0) await mermaid.run();
+        }
+
+        function renderImages(metadata) {
+            var images = metadata && metadata.images;
+            if (!images || images.length === 0) return '';
+            var html = '<div class="memory-images">';
+            for (var img of images) {
+                html += '<div class="memory-image"><img src="' + img.src + '" alt="' + (img.caption || '') + '">';
+                if (img.caption) html += '<div class="caption">' + img.caption + '</div>';
+                html += '</div>';
+            }
+            return html + '</div>';
+        }
+
+        function filterByTag(tag) {
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            var el = document.querySelector('.legend-item[data-tag="' + tag + '"]');
+            if (el) el.classList.add('active');
+            currentFilter = tag;
+            var nodeIds = graphData.tagToNodes[tag] || [];
+            applyFilter(nodeIds);
+        }
+
+        function filterBySection(section) {
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            var el = document.querySelector('.section-item[data-section="' + section + '"]');
+            if (el) el.classList.add('active');
+            currentFilter = section;
+            var nodeIds = graphData.sectionToNodes[section] || [];
+            applyFilter(nodeIds);
+        }
+
+        function filterBySubsection(subsection) {
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            var el = document.querySelector('.subsection-item[data-subsection="' + subsection + '"]');
+            if (el) el.classList.add('active');
+            currentFilter = subsection;
+            var nodeIds = graphData.subsectionToNodes[subsection] || [];
+            applyFilter(nodeIds);
+        }
+
+        function applyFilter(nodeIds) {
+            var nodeSet = new Set(nodeIds);
+            nodes.clear();
+            edges.clear();
+            var filteredNodes = graphData.nodes.filter(n => nodeSet.has(n.id));
+            var filteredEdges = graphData.edges.filter(e => nodeSet.has(e.from) && nodeSet.has(e.to));
+            nodes.add(filteredNodes);
+            edges.add(filteredEdges);
+            network.fit({ animation: true });
+        }
+
+        function resetFilter() {
+            document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+            currentFilter = null;
+            nodes.clear();
+            edges.clear();
+            nodes.add(graphData.nodes);
+            edges.add(graphData.edges);
+            network.fit({ animation: true });
+        }
+
+        function searchMemories(query) {
+            if (!query || query.length < 2) {
+                if (!currentFilter) resetFilter();
+                return;
+            }
+            query = query.toLowerCase();
+            var matchingIds = graphData.nodes.filter(n => n.label.toLowerCase().includes(query)).map(n => n.id);
+            applyFilter(matchingIds);
+        }
+
+        function closePanel() {
+            document.getElementById('panel').classList.remove('active');
+            document.getElementById('resize-handle').classList.remove('active');
+        }
+
+        // Resize handle logic
+        var resizeHandle = document.getElementById('resize-handle');
+        var panel = document.getElementById('panel');
+        var isResizing = false;
+
+        resizeHandle.addEventListener('mousedown', function(e) {
+            isResizing = true;
+            resizeHandle.classList.add('dragging');
+            document.body.style.cursor = 'ew-resize';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isResizing) return;
+            var newWidth = window.innerWidth - e.clientX;
+            if (newWidth >= 200 && newWidth <= 800) panel.style.width = newWidth + 'px';
+        });
+
+        document.addEventListener('mouseup', function() {
+            isResizing = false;
+            resizeHandle.classList.remove('dragging');
+            document.body.style.cursor = '';
+        });
+
+        // Load graph on page load
+        loadGraph();
+    </script>
+</body>
+</html>'''
+
     async def graph_handler(request: Request):
-        """Serve the knowledge graph visualization."""
+        """Serve the static graph SPA."""
+        return HTMLResponse(GRAPH_HTML)
+
+    async def api_graph(request: Request):
+        """API endpoint: Get graph nodes and edges."""
         try:
             min_score = float(request.query_params.get("min_score", 0.25))
-            result = _export_graph_html(output_path=None, min_score=min_score)
-            if "error" in result:
+            rebuild = request.query_params.get("rebuild", "").lower() == "true"
+            result = _get_graph_data(min_score, rebuild=rebuild)
+            return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory(request: Request):
+        """API endpoint: Get a single memory by ID."""
+        try:
+            memory_id = int(request.path_params.get("id"))
+            result = _get_memory_for_api(memory_id)
+            if result.get("error") == "not_found":
                 return JSONResponse(result, status_code=404)
-            return HTMLResponse(result["html"])
+            return JSONResponse(result)
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1419,12 +1879,10 @@ def _start_graph_server(host: str, port: int) -> None:
             if not image_storage:
                 return JSONResponse({"error": "R2 not configured"}, status_code=503)
 
-            # Get the image key from the path (e.g., /r2/images/49/...)
             key = request.path_params.get("path", "")
             if not key:
                 return JSONResponse({"error": "No path provided"}, status_code=400)
 
-            # Fetch from R2
             try:
                 response = image_storage.s3_client.get_object(
                     Bucket=image_storage.bucket,
@@ -1436,7 +1894,7 @@ def _start_graph_server(host: str, port: int) -> None:
                 return Response(
                     content=image_data,
                     media_type=content_type,
-                    headers={"Cache-Control": "public, max-age=86400"},  # Cache for 1 day
+                    headers={"Cache-Control": "public, max-age=86400"},
                 )
             except Exception as e:
                 return JSONResponse({"error": f"Image not found: {e}"}, status_code=404)
@@ -1446,12 +1904,13 @@ def _start_graph_server(host: str, port: int) -> None:
 
     app = Starlette(routes=[
         Route("/graph", graph_handler),
+        Route("/api/graph", api_graph),
+        Route("/api/memories/{id:int}", api_memory),
         Route("/r2/{path:path}", r2_image_proxy),
     ])
 
     def run_server():
         import uvicorn
-        # Suppress uvicorn logs to avoid cluttering MCP stdio
         uvicorn.run(
             app,
             host=host,
