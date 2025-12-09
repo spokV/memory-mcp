@@ -1802,7 +1802,7 @@ def _start_graph_server(host: str, port: int) -> None:
 
         function searchMemories(query) {
             if (!query || query.length < 2) {
-                if (!currentFilter) resetFilter();
+                resetFilter();
                 return;
             }
             query = query.toLowerCase();
