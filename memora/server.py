@@ -311,7 +311,18 @@ def _extract_hierarchy_path(metadata: Optional[Any]) -> List[str]:
     return path
 
 
-def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = False) -> Any:
+def _compact_memory(memory: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact representation of a memory (id, preview, tags)."""
+    content = memory.get("content", "")
+    preview = content[:80] + "..." if len(content) > 80 else content
+    return {
+        "id": memory.get("id"),
+        "preview": preview,
+        "tags": memory.get("tags", []),
+    }
+
+
+def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = False, compact: bool = True) -> Any:
     root: Dict[str, Any] = {
         "name": "root",
         "path": [],
@@ -323,9 +334,10 @@ def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = F
         path = _extract_hierarchy_path(memory.get("metadata"))
         node = root
         if not path:
-            memory_with_path = dict(memory)
-            memory_with_path["hierarchy_path"] = node["path"]
-            node["memories"].append(memory_with_path)
+            mem_data = _compact_memory(memory) if compact else dict(memory)
+            if not compact:
+                mem_data["hierarchy_path"] = node["path"]
+            node["memories"].append(mem_data)
             continue
 
         for part in path:
@@ -338,9 +350,10 @@ def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = F
                     "children": {},
                 }
             node = children[part]
-        memory_with_path = dict(memory)
-        memory_with_path["hierarchy_path"] = node["path"]
-        node["memories"].append(memory_with_path)
+        mem_data = _compact_memory(memory) if compact else dict(memory)
+        if not compact:
+            mem_data["hierarchy_path"] = node["path"]
+        node["memories"].append(mem_data)
 
     def collapse(node: Dict[str, Any]) -> Dict[str, Any]:
         children_map: Dict[str, Any] = node.get("children", {})
@@ -560,14 +573,20 @@ async def memory_hierarchy(
     tags_any: Optional[List[str]] = None,
     tags_all: Optional[List[str]] = None,
     tags_none: Optional[List[str]] = None,
+    compact: bool = True,
 ) -> Dict[str, Any]:
-    """Return memories organised into a hierarchy derived from their metadata."""
+    """Return memories organised into a hierarchy derived from their metadata.
+
+    Args:
+        compact: If True (default), return only id, preview (first 80 chars), and tags
+                 per memory to reduce response size. Set to False for full memory data.
+    """
     try:
         items = _list_memories(query, metadata_filters, None, 0, date_from, date_to, tags_any, tags_all, tags_none)
     except ValueError as exc:
         return {"error": "invalid_filters", "message": str(exc)}
 
-    hierarchy = _build_hierarchy_tree(items, include_root=include_root)
+    hierarchy = _build_hierarchy_tree(items, include_root=include_root, compact=compact)
     return {"count": len(items), "hierarchy": hierarchy}
 
 
