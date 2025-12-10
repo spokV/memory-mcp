@@ -1435,17 +1435,25 @@ def _get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> dict:
                     tag_to_nodes[tag] = []
                 tag_to_nodes[tag].append(m["id"])
 
-            # Build section mapping
+            # Build section mapping using hierarchy.path
             meta = m.get("metadata") or {}
-            section = meta.get("section", "Uncategorized")
-            subsection = meta.get("subsection", "")
+            hierarchy = meta.get("hierarchy", {})
+            hierarchy_path = hierarchy.get("path", []) if isinstance(hierarchy, dict) else []
+
+            # Use hierarchy.path if available, otherwise fall back to section/subsection
+            if hierarchy_path and len(hierarchy_path) >= 1:
+                section = hierarchy_path[0]
+                parts = hierarchy_path[1:]  # Remaining path elements after section
+            else:
+                section = meta.get("section", "Uncategorized")
+                subsection = meta.get("subsection", "")
+                parts = subsection.split("/") if subsection else []
 
             if section not in section_to_nodes:
                 section_to_nodes[section] = []
             section_to_nodes[section].append(m["id"])
 
-            if subsection:
-                parts = subsection.split("/")
+            if parts:
                 for i in range(len(parts)):
                     partial_path = "/".join(parts[:i+1])
                     full_key = f"{section}/{partial_path}"
