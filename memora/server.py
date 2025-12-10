@@ -322,6 +322,56 @@ def _compact_memory(memory: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _get_existing_hierarchy_paths() -> List[List[str]]:
+    """Get all unique hierarchy paths from existing memories."""
+    items = _list_memories(None, None, None, 0, None, None, None, None, None)
+    paths_set: set = set()
+    for memory in items:
+        path = _extract_hierarchy_path(memory.get("metadata"))
+        if path:
+            # Add the full path and all parent paths
+            for i in range(1, len(path) + 1):
+                paths_set.add(tuple(path[:i]))
+    return sorted([list(p) for p in paths_set], key=lambda x: (len(x), x))
+
+
+def _find_similar_paths(new_path: List[str], existing_paths: List[List[str]]) -> List[List[str]]:
+    """Find existing paths similar to new_path - siblings or paths with similar names."""
+    if not new_path or not existing_paths:
+        return []
+
+    suggestions = []
+    new_path_lower = [p.lower() for p in new_path]
+    new_parent = new_path[:-1] if len(new_path) > 1 else []
+    new_leaf = new_path_lower[-1] if new_path else ""
+
+    for existing in existing_paths:
+        existing_lower = [p.lower() for p in existing]
+        existing_parent = existing[:-1] if len(existing) > 1 else []
+        existing_leaf = existing_lower[-1] if existing else ""
+
+        # Priority 1: Same parent, different leaf (siblings)
+        if existing_parent == new_parent and existing_lower != new_path_lower:
+            # Check if leaf names are similar (substring match)
+            if new_leaf in existing_leaf or existing_leaf in new_leaf:
+                if existing not in suggestions:
+                    suggestions.insert(0, existing)  # High priority
+                continue
+
+        # Priority 2: Same parent (show siblings)
+        if existing_parent == new_parent and existing not in suggestions:
+            suggestions.append(existing)
+            continue
+
+        # Priority 3: Substring match in leaf (e.g., "background" matches "2. background")
+        if new_leaf and existing_leaf:
+            if new_leaf in existing_leaf or existing_leaf in new_leaf:
+                if existing not in suggestions:
+                    suggestions.append(existing)
+
+    return suggestions[:5]  # Limit to 5 suggestions
+
+
 def _build_hierarchy_tree(memories: List[Dict[str, Any]], include_root: bool = False, compact: bool = True) -> Any:
     root: Dict[str, Any] = {
         "name": "root",
@@ -375,11 +425,27 @@ async def memory_create(
     tags: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     """Create a new memory entry."""
+    # Check hierarchy path BEFORE creating to detect new paths
+    new_path = _extract_hierarchy_path(metadata)
+    existing_paths = _get_existing_hierarchy_paths() if new_path else []
+    path_is_new = bool(new_path) and (new_path not in existing_paths)
+
     try:
         record = _create_memory(content=content.strip(), metadata=metadata, tags=tags or [])
     except ValueError as exc:
         return {"error": "invalid_input", "message": str(exc)}
-    return {"memory": record}
+
+    result: Dict[str, Any] = {"memory": record}
+
+    # Warn if a new hierarchy path was created and suggest similar existing paths
+    if path_is_new:
+        similar = _find_similar_paths(new_path, existing_paths)
+        if similar:
+            result["warning"] = f"New hierarchy path created: {new_path}"
+            result["existing_similar_paths"] = similar
+            result["hint"] = "Did you mean to use one of these existing paths? Use memory_update to change if needed."
+
+    return result
 
 
 @mcp.tool()
