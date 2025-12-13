@@ -2,6 +2,8 @@
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
+<img src="media/viz_graph_exp.png" alt="Knowledge Graph Visualization" width="600">
+
 ## Features
 
 - **Persistent Storage** - SQLite-backed database with optional cloud sync (S3, GCS, Azure)

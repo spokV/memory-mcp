@@ -4,3 +4,9 @@ __pycache__/
 
 config/allowed_tags.json
 .DS_Store
+
+# Local config
+.mcp.json
+
+# Vendored libs
+lib/
