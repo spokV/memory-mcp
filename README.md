@@ -20,7 +20,7 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 
 ```bash
 # From GitHub
-pip install git+https://github.com/spokV/memora.git
+pip install git+https://github.com/agentic-mcp-tools/memora.git
 
 # For cloud storage (S3/R2/GCS/Azure), install boto3 separately
 pip install boto3
@@ -35,11 +35,14 @@ pip install -e ".[all]"    # includes cloud + dev tools
 The server runs automatically when configured in Claude Code. Manual invocation:
 
 ```bash
-# Default (stdio mode)
+# Default (stdio mode for MCP)
 memora-server
 
-# HTTP endpoint
-memora-server --transport streamable-http --host 127.0.0.1 --port 8765
+# With graph visualization server
+memora-server --graph-port 8765
+
+# HTTP transport (alternative to stdio)
+memora-server --transport streamable-http --host 127.0.0.1 --port 8080
 ```
 
 ## Claude Code Config
@@ -51,10 +54,10 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "memory": {
-      "command": "{$HOME}/miniconda/bin/memora-server",
+      "command": "memora-server",
       "args": [],
       "env": {
-        "MEMORA_DB_PATH": "{$HOME}/.local/share/memora/memories.db",
+        "MEMORA_DB_PATH": "~/.local/share/memora/memories.db",
         "MEMORA_ALLOW_ANY_TAG": "1",
         "MEMORA_GRAPH_PORT": "8765"
       }
@@ -68,10 +71,10 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "memory": {
-      "command": "/opt/conda/bin/memora-server",
+      "command": "memora-server",
       "args": [],
       "env": {
-        "AWS_ENDPOINT_URL": "https://xxxxxxx.r2.cloudflarestorage.com",
+        "AWS_ENDPOINT_URL": "https://<account-id>.r2.cloudflarestorage.com",
         "MEMORA_STORAGE_URI": "s3://memories/memories.db",
         "MEMORA_CLOUD_ENCRYPT": "true",
         "MEMORA_ALLOW_ANY_TAG": "1",
@@ -81,6 +84,33 @@ Add to `.mcp.json` in your project root:
   }
 }
 ```
+
+## Codex CLI Config
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.memory]
+  command = "memora-server"  # or full path: /path/to/bin/memora-server
+  args = ["--no-graph"]
+  env = {
+    AWS_ENDPOINT_URL = "https://<account-id>.r2.cloudflarestorage.com",
+    MEMORA_STORAGE_URI = "s3://memories/memories.db",
+    MEMORA_CLOUD_ENCRYPT = "true",
+    MEMORA_ALLOW_ANY_TAG = "1",
+  }
+```
+
+## Environment Variables
+
+| Variable               | Description                                                                 |
+|------------------------|-----------------------------------------------------------------------------|
+| `MEMORA_DB_PATH`       | Local SQLite database path (default: `~/.local/share/memora/memories.db`)  |
+| `MEMORA_STORAGE_URI`   | Cloud storage URI for S3/R2 (e.g., `s3://bucket/memories.db`)              |
+| `MEMORA_CLOUD_ENCRYPT` | Encrypt database before uploading to cloud (`true`/`false`)                |
+| `MEMORA_ALLOW_ANY_TAG` | Allow any tag without validation against allowlist (`1` to enable)         |
+| `MEMORA_GRAPH_PORT`    | Port for the knowledge graph visualization server (default: `8765`)        |
+| `AWS_ENDPOINT_URL`     | S3-compatible endpoint for R2/MinIO                                        |
 
 ## Neovim Integration
 
