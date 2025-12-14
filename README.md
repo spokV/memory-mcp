@@ -24,12 +24,10 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 # From GitHub
 pip install git+https://github.com/agentic-mcp-tools/memora.git
 
-# For cloud storage (S3/R2/GCS/Azure), install boto3 separately
-pip install boto3
-
-# Or from local clone with extras
-pip install -e ".[cloud]"  # includes boto3
-pip install -e ".[all]"    # includes cloud + dev tools
+# With extras
+pip install -e ".[cloud]"       # S3/R2/GCS cloud storage (boto3)
+pip install -e ".[embeddings]"  # semantic search (sentence-transformers)
+pip install -e ".[all]"         # cloud + embeddings + dev tools
 ```
 
 ## Usage
@@ -110,9 +108,42 @@ Add to `~/.codex/config.toml`:
 | `MEMORA_DB_PATH`       | Local SQLite database path (default: `~/.local/share/memora/memories.db`)  |
 | `MEMORA_STORAGE_URI`   | Cloud storage URI for S3/R2 (e.g., `s3://bucket/memories.db`)              |
 | `MEMORA_CLOUD_ENCRYPT` | Encrypt database before uploading to cloud (`true`/`false`)                |
+| `MEMORA_CLOUD_COMPRESS`| Compress database before uploading to cloud (`true`/`false`)               |
+| `MEMORA_CACHE_DIR`     | Local cache directory for cloud-synced database                            |
 | `MEMORA_ALLOW_ANY_TAG` | Allow any tag without validation against allowlist (`1` to enable)         |
+| `MEMORA_TAG_FILE`      | Path to file containing allowed tags (one per line)                        |
+| `MEMORA_TAGS`          | Comma-separated list of allowed tags                                       |
 | `MEMORA_GRAPH_PORT`    | Port for the knowledge graph visualization server (default: `8765`)        |
+| `MEMORA_EMBEDDING_MODEL` | Embedding backend: `tfidf` (default), `sentence-transformers`, or `openai` |
+| `SENTENCE_TRANSFORMERS_MODEL` | Model for sentence-transformers (default: `all-MiniLM-L6-v2`)        |
+| `OPENAI_API_KEY`       | API key for OpenAI embeddings (required when using `openai` backend)       |
+| `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model (default: `text-embedding-3-small`)                |
 | `AWS_ENDPOINT_URL`     | S3-compatible endpoint for R2/MinIO                                        |
+| `R2_PUBLIC_DOMAIN`     | Public domain for R2 image URLs                                            |
+
+## Semantic Search & Embeddings
+
+Memora supports three embedding backends for semantic search:
+
+| Backend | Install | Quality | Speed |
+|---------|---------|---------|-------|
+| `tfidf` (default) | None | Basic keyword matching | Fast |
+| `sentence-transformers` | `pip install sentence-transformers` | True semantic understanding | Medium |
+| `openai` | `pip install openai` | High quality | API latency |
+
+**Automatic:** Embeddings and cross-references are computed automatically when you `memory_create`, `memory_update`, or `memory_create_batch`.
+
+**Manual rebuild required** when:
+- Changing `MEMORA_EMBEDDING_MODEL` after memories exist
+- Switching to a different sentence-transformers model
+
+```bash
+# After changing embedding model, rebuild all embeddings
+memory_rebuild_embeddings
+
+# Then rebuild cross-references to update the knowledge graph
+memory_rebuild_crossrefs
+```
 
 ## Neovim Integration
 

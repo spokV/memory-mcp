@@ -18,13 +18,16 @@ cloud = [
     "boto3>=1.28.0",
     "filelock>=3.12.0",
 ]
+embeddings = [
+    "sentence-transformers>=2.2.0",
+]
 dev = [
     "moto[s3]>=5.0.0",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
 ]
 all = [
-    "memora[cloud,dev]",
+    "memora[cloud,embeddings,dev]",
 ]
 
 [project.scripts]
