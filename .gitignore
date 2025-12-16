@@ -10,3 +10,6 @@ config/allowed_tags.json
 
 # Vendored libs
 lib/
+
+# uv lock file
+uv.lock
