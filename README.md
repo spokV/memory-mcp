@@ -1,7 +1,7 @@
-<table><tr>
-<td><img src="media/memora.gif" width="120" alt="Memora Demo"></td>
-<td><h1>Memora</h1></td>
-</tr></table>
+<img src="media/memora.gif" width="60" align="left" alt="Memora Demo">
+
+# Memora
+<br clear="left">
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
