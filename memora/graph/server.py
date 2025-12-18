@@ -1,5 +1,6 @@
 """HTTP server and routes for graph visualization."""
 
+import os
 import socket
 import sys
 import threading
@@ -140,4 +141,6 @@ def start_graph_server(host: str, port: int) -> None:
 
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
-    print(f"Graph visualization available at http://{host}:{port}/graph", file=sys.stderr)
+    aws_profile = os.getenv("AWS_PROFILE", "")
+    profile_param = f"?profile={aws_profile}" if aws_profile else ""
+    print(f"Graph visualization available at http://{host}:{port}/graph{profile_param}", file=sys.stderr)
