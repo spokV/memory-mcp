@@ -418,8 +418,18 @@ async def memory_create(
     content: str,
     metadata: Optional[Dict[str, Any]] = None,
     tags: Optional[list[str]] = None,
+    suggest_similar: bool = True,
+    similarity_threshold: float = 0.4,
 ) -> Dict[str, Any]:
-    """Create a new memory entry."""
+    """Create a new memory entry.
+
+    Args:
+        content: The memory content text
+        metadata: Optional metadata dictionary
+        tags: Optional list of tags
+        suggest_similar: If True, find similar memories and suggest consolidation (default: True)
+        similarity_threshold: Minimum similarity score for suggestions (default: 0.4)
+    """
     # Check hierarchy path BEFORE creating to detect new paths
     new_path = _extract_hierarchy_path(metadata)
     existing_paths = _get_existing_hierarchy_paths() if new_path else []
@@ -440,7 +450,63 @@ async def memory_create(
             result["existing_similar_paths"] = similar
             result["hint"] = "Did you mean to use one of these existing paths? Use memory_update to change if needed."
 
+    # Search for similar memories and suggest consolidation
+    if suggest_similar:
+        similar_memories = _find_similar_for_consolidation(
+            record["id"], content, similarity_threshold
+        )
+        if similar_memories:
+            result["similar_memories"] = similar_memories
+            result["consolidation_hint"] = (
+                f"Found {len(similar_memories)} similar memories. "
+                "Consider: (1) merge content with memory_update, or (2) delete redundant ones with memory_delete."
+            )
+
     return result
+
+
+def _find_similar_for_consolidation(
+    new_memory_id: int,
+    content: str,
+    min_score: float = 0.4,
+    max_results: int = 5,
+) -> List[Dict[str, Any]]:
+    """Find memories similar to the newly created one for potential consolidation.
+
+    Returns a list of similar memories with similarity scores and previews.
+    Excludes the newly created memory itself.
+    """
+    try:
+        results = _semantic_search(
+            content,
+            metadata_filters=None,
+            top_k=max_results + 1,  # +1 to account for the new memory itself
+            min_score=min_score,
+        )
+    except Exception:
+        return []
+
+    # Filter out the newly created memory and format results
+    similar = []
+    for item in results:
+        memory = item.get("memory", {})
+        if memory.get("id") == new_memory_id:
+            continue
+
+        mem_content = memory.get("content", "")
+        preview = mem_content[:120] + "..." if len(mem_content) > 120 else mem_content
+
+        similar.append({
+            "id": memory.get("id"),
+            "score": round(item.get("score", 0), 3),
+            "preview": preview,
+            "tags": memory.get("tags", []),
+        })
+
+        if len(similar) >= max_results:
+            break
+
+    return similar
 
 
 @mcp.tool()
