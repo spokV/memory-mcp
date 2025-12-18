@@ -30,7 +30,10 @@ if _storage_uri:
 else:
     # Legacy: Use MEMORA_DB_PATH or default local path
     _db_path_env = os.getenv("MEMORA_DB_PATH")
-    DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
+    if _db_path_env:
+        DB_PATH = Path(os.path.expanduser(os.path.expandvars(_db_path_env)))
+    else:
+        DB_PATH = Path.home() / ".local" / "share" / "memora" / "memories.db"
     from .backends import LocalSQLiteBackend
     STORAGE_BACKEND = LocalSQLiteBackend(DB_PATH)
 
