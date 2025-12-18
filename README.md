@@ -77,6 +77,7 @@ Add to `.mcp.json` in your project root:
       "command": "memora-server",
       "args": [],
       "env": {
+        "AWS_PROFILE": "memora",
         "AWS_ENDPOINT_URL": "https://<account-id>.r2.cloudflarestorage.com",
         "MEMORA_STORAGE_URI": "s3://memories/memories.db",
         "MEMORA_CLOUD_ENCRYPT": "true",
@@ -97,6 +98,7 @@ Add to `~/.codex/config.toml`:
   command = "memora-server"  # or full path: /path/to/bin/memora-server
   args = ["--no-graph"]
   env = {
+    AWS_PROFILE = "memora",
     AWS_ENDPOINT_URL = "https://<account-id>.r2.cloudflarestorage.com",
     MEMORA_STORAGE_URI = "s3://memories/memories.db",
     MEMORA_CLOUD_ENCRYPT = "true",
@@ -121,6 +123,7 @@ Add to `~/.codex/config.toml`:
 | `SENTENCE_TRANSFORMERS_MODEL` | Model for sentence-transformers (default: `all-MiniLM-L6-v2`)        |
 | `OPENAI_API_KEY`       | API key for OpenAI embeddings (required when using `openai` backend)       |
 | `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model (default: `text-embedding-3-small`)                |
+| `AWS_PROFILE`          | AWS credentials profile from `~/.aws/credentials` (useful for R2)          |
 | `AWS_ENDPOINT_URL`     | S3-compatible endpoint for R2/MinIO                                        |
 | `R2_PUBLIC_DOMAIN`     | Public domain for R2 image URLs                                            |
 
