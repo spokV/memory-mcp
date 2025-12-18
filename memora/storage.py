@@ -30,7 +30,10 @@ if _storage_uri:
 else:
     # Legacy: Use MEMORA_DB_PATH or default local path
     _db_path_env = os.getenv("MEMORA_DB_PATH")
-    DB_PATH = Path(_db_path_env) if _db_path_env else ROOT / "memories.db"
+    if _db_path_env:
+        DB_PATH = Path(os.path.expanduser(os.path.expandvars(_db_path_env)))
+    else:
+        DB_PATH = Path.home() / ".local" / "share" / "memora" / "memories.db"
     from .backends import LocalSQLiteBackend
     STORAGE_BACKEND = LocalSQLiteBackend(DB_PATH)
 
@@ -131,6 +134,15 @@ def _ensure_embeddings_table(conn: sqlite3.Connection) -> None:
             memory_id INTEGER PRIMARY KEY,
             embedding TEXT,
             FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        )
+        """
+    )
+    # Metadata table for storing embedding model info
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
         )
         """
     )
@@ -1516,7 +1528,30 @@ def semantic_search(
     metadata_filters: Optional[Dict[str, Any]] = None,
     top_k: Optional[int] = 5,
     min_score: Optional[float] = None,
+    auto_rebuild: bool = True,
 ) -> List[Dict[str, Any]]:
+    """Perform semantic search using vector embeddings.
+
+    Args:
+        conn: Database connection
+        query: Search query text
+        metadata_filters: Optional metadata filters
+        top_k: Maximum number of results
+        min_score: Minimum similarity score threshold
+        auto_rebuild: If True, automatically rebuild embeddings on model mismatch
+
+    Returns:
+        List of results with score and memory
+    """
+    # Check for embedding model mismatch and rebuild if needed
+    if auto_rebuild and _check_embedding_model_mismatch(conn):
+        import sys
+        print(
+            f"[memora] Embedding model changed: rebuilding embeddings with '{EMBEDDING_MODEL}'...",
+            file=sys.stderr,
+        )
+        rebuild_embeddings(conn)
+
     vector_query = _compute_embedding(query, None, [])
     if not vector_query:
         return []
@@ -1542,6 +1577,7 @@ def hybrid_search(
     tags_any: Optional[List[str]] = None,
     tags_all: Optional[List[str]] = None,
     tags_none: Optional[List[str]] = None,
+    auto_rebuild: bool = True,
 ) -> List[Dict[str, Any]]:
     """Combine FTS keyword search and semantic vector search using Reciprocal Rank Fusion.
 
@@ -1557,6 +1593,7 @@ def hybrid_search(
         tags_any: Match memories with ANY of these tags
         tags_all: Match memories with ALL of these tags
         tags_none: Exclude memories with ANY of these tags
+        auto_rebuild: If True, automatically rebuild embeddings on model mismatch
 
     Returns:
         List of memories with combined scores, sorted by relevance
@@ -1575,6 +1612,7 @@ def hybrid_search(
         metadata_filters=metadata_filters,
         top_k=top_k * 3,
         min_score=None,  # Get all results, filter after fusion
+        auto_rebuild=auto_rebuild,
     )
 
     # 2. Get keyword search results
@@ -1636,7 +1674,44 @@ def hybrid_search(
     return results
 
 
+def _get_stored_embedding_model(conn: sqlite3.Connection) -> Optional[str]:
+    """Get the embedding model name stored in the database."""
+    row = conn.execute(
+        "SELECT value FROM memories_meta WHERE key = 'embedding_model'"
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def _set_stored_embedding_model(conn: sqlite3.Connection, model: str) -> None:
+    """Store the embedding model name in the database."""
+    conn.execute(
+        """
+        INSERT INTO memories_meta (key, value) VALUES ('embedding_model', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (model,),
+    )
+    conn.commit()
+
+
+def _check_embedding_model_mismatch(conn: sqlite3.Connection) -> bool:
+    """Check if current embedding model differs from stored model.
+
+    Returns True if mismatch detected (rebuild needed).
+    """
+    stored = _get_stored_embedding_model(conn)
+    if stored is None:
+        # No model stored yet - check if embeddings exist
+        count = conn.execute("SELECT COUNT(*) FROM memories_embeddings").fetchone()[0]
+        if count > 0:
+            # Embeddings exist but no model recorded - assume mismatch
+            return True
+        return False
+    return stored != EMBEDDING_MODEL
+
+
 def rebuild_embeddings(conn: sqlite3.Connection) -> int:
+    """Rebuild all embeddings using current EMBEDDING_MODEL."""
     rows = conn.execute(
         "SELECT id, content, metadata, tags FROM memories"
     ).fetchall()
@@ -1648,6 +1723,8 @@ def rebuild_embeddings(conn: sqlite3.Connection) -> int:
         vector = _compute_embedding(row["content"], metadata, tags)
         _upsert_embedding(conn, memory_id, vector)
         updated += 1
+    # Store the model name after successful rebuild
+    _set_stored_embedding_model(conn, EMBEDDING_MODEL)
     conn.commit()
     return updated
 
