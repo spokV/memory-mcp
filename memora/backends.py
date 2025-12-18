@@ -246,6 +246,56 @@ class CloudSQLiteBackend(StorageBackend):
         except Exception as e:
             logger.warning(f"Failed to save metadata: {e}")
 
+    def _create_and_upload_empty_database(self) -> None:
+        """Create an empty database locally and upload it to cloud storage.
+
+        This is called when the remote database doesn't exist yet (first-time setup).
+        """
+        logger.info(f"Creating empty database and uploading to {self.bucket}/{self.key}")
+
+        # Create empty local database with schema
+        # Import here to avoid circular imports
+        from .storage import ensure_schema
+
+        conn = sqlite3.connect(self.cache_path, check_same_thread=True)
+        conn.row_factory = sqlite3.Row
+        ensure_schema(conn)
+        conn.close()
+
+        logger.info(f"Created empty database at {self.cache_path}")
+
+        # Upload to cloud
+        extra_args = {}
+        if self.encrypt:
+            extra_args["ServerSideEncryption"] = "AES256"
+
+        self.s3_client.upload_file(
+            str(self.cache_path),
+            self.bucket,
+            self.key,
+            ExtraArgs=extra_args if extra_args else None
+        )
+
+        # Get the ETag of the uploaded file
+        head_response = self.s3_client.head_object(
+            Bucket=self.bucket,
+            Key=self.key
+        )
+
+        # Save metadata
+        metadata = {
+            "etag": head_response.get("ETag", "").strip('"'),
+            "last_sync": datetime.now().isoformat(),
+            "remote_modified": head_response.get("LastModified").isoformat() if head_response.get("LastModified") else None,
+        }
+        self._save_metadata(metadata)
+
+        # Update tracking
+        self._last_hash = self._compute_hash()
+        self._is_dirty = False
+
+        logger.info(f"Uploaded empty database to {self.bucket}/{self.key}")
+
     def sync_before_use(self) -> None:
         """Download database from S3 if needed."""
         if not self.auto_sync:
@@ -262,9 +312,16 @@ class CloudSQLiteBackend(StorageBackend):
                     remote_etag = head_response.get("ETag", "").strip('"')
                     remote_modified = head_response.get("LastModified")
                 except ClientError as e:
-                    if e.response["Error"]["Code"] == "404":
-                        # Remote object doesn't exist yet - create empty local DB
-                        logger.info(f"Remote database not found, will create new one")
+                    error_code = e.response["Error"]["Code"]
+                    # Handle both 404 (Not Found) and 403 (Forbidden/Access Denied)
+                    # R2 and some S3 configurations return 403 for non-existent objects
+                    # when the bucket policy doesn't allow ListBucket
+                    if error_code in ("404", "403"):
+                        logger.info(
+                            f"Remote database not found (error {error_code}), "
+                            f"creating empty database"
+                        )
+                        self._create_and_upload_empty_database()
                         return
                     raise
 
