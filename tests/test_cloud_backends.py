@@ -135,6 +135,42 @@ class TestCloudSQLiteBackend:
         )
         assert response["ContentLength"] > 0
 
+    def test_cloud_backend_auto_creates_and_uploads_empty_db(self, tmp_path):
+        """Test that connect() auto-creates and uploads empty database when remote doesn't exist."""
+        backend = CloudSQLiteBackend(
+            cloud_url=self.cloud_url,
+            cache_dir=tmp_path,
+        )
+
+        # Just calling connect() should auto-create and upload the database
+        conn = backend.connect()
+
+        # Verify the database has the memora schema (memories table exists)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memories'"
+        )
+        assert cursor.fetchone() is not None, "memories table should exist"
+
+        # Also verify FTS and embeddings tables
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+        )
+        assert cursor.fetchone() is not None, "memories_fts table should exist"
+
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_embeddings'"
+        )
+        assert cursor.fetchone() is not None, "memories_embeddings table should exist"
+
+        conn.close()
+
+        # Verify object was uploaded to S3
+        response = self.s3_client.head_object(
+            Bucket=self.bucket_name,
+            Key=self.key_name
+        )
+        assert response["ContentLength"] > 0
+
     def test_cloud_backend_sync_download(self, tmp_path):
         """Test downloading database from S3."""
         # First, create and upload a database
