@@ -291,6 +291,7 @@ def build_static_html(
     section_to_nodes_json: str,
     path_to_nodes_json: str,
     status_to_nodes_json: str,
+    issue_category_to_nodes_json: str,
     todo_status_to_nodes_json: str,
     todo_category_to_nodes_json: str,
     legend_html: str,
@@ -331,12 +332,13 @@ def build_static_html(
         var sectionToNodes = {section_to_nodes_json};
         var subsectionToNodes = {path_to_nodes_json};
         var statusToNodes = {status_to_nodes_json};
+        var issueCategoryToNodes = {issue_category_to_nodes_json};
         var todoStatusToNodes = {todo_status_to_nodes_json};
         var todoCategoryToNodes = {todo_category_to_nodes_json};
         var allNodes = {nodes_json};
         var allEdges = {edges_json};
         var currentFilter = null;
-        var graphData = {{ statusToNodes: statusToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes }};
+        var graphData = {{ statusToNodes: statusToNodes, issueCategoryToNodes: issueCategoryToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes }};
 
         {js}
 
@@ -436,6 +438,16 @@ def get_spa_html() -> str:
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     issuesHtml += '<div class="legend-item" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + ';border-radius:2px"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                }}
+                // Add components (categories)
+                if (graphData.issueCategoryToNodes && Object.keys(graphData.issueCategoryToNodes).length > 0) {{
+                    issuesHtml += '<div class="issue-categories"><b>Components</b>';
+                    var components = Object.keys(graphData.issueCategoryToNodes).sort();
+                    for (var component of components) {{
+                        var count = graphData.issueCategoryToNodes[component].length;
+                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color" style="background:#8b949e;border-radius:2px"></span>' + component + ' (' + count + ')</div>';
+                    }}
+                    issuesHtml += '</div>';
                 }}
             }}
             document.getElementById('issues-legend-items').innerHTML = issuesHtml;

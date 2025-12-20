@@ -1,6 +1,6 @@
 """Issue-specific visualization logic for the knowledge graph."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Status colors for issue nodes
 STATUS_COLORS = {
@@ -88,13 +88,35 @@ def build_status_to_nodes(memories: list) -> Dict[str, list]:
     return status_to_nodes
 
 
-def build_issue_legend_html(status_to_nodes: Dict[str, list]) -> str:
-    """Build HTML for issue status legend section."""
+def build_issue_category_to_nodes(memories: List[Dict]) -> Dict[str, List[int]]:
+    """Build mapping of issue component/category -> list of node IDs.
+
+    Only includes memories that are issues (metadata.type == 'issue').
+    """
+    category_to_nodes: Dict[str, List[int]] = {}
+
+    for m in memories:
+        meta = m.get("metadata") or {}
+        if is_issue(meta):
+            category = meta.get("component", "uncategorized")
+            if category not in category_to_nodes:
+                category_to_nodes[category] = []
+            category_to_nodes[category].append(m["id"])
+
+    return category_to_nodes
+
+
+def build_issue_legend_html(
+    status_to_nodes: Dict[str, list],
+    category_to_nodes: Optional[Dict[str, List[int]]] = None,
+) -> str:
+    """Build HTML for issue status and category legend section."""
     if not status_to_nodes:
         return ""
 
     html_parts = ['<div id="issues-legend"><b>Issues</b>']
 
+    # Status items
     for status, color in STATUS_COLORS.items():
         count = len(status_to_nodes.get(status, []))
         if count > 0:
@@ -105,6 +127,19 @@ def build_issue_legend_html(status_to_nodes: Dict[str, list]) -> str:
                 f'<span class="legend-color" style="background:{color};border-radius:2px"></span>'
                 f'{display_name} ({count})</div>'
             )
+
+    # Category items (components)
+    if category_to_nodes:
+        html_parts.append('<div class="issue-categories"><b>Components</b>')
+        for category in sorted(category_to_nodes.keys()):
+            count = len(category_to_nodes[category])
+            html_parts.append(
+                f'<div class="legend-item issue-category" data-issue-category="{category}" '
+                f'onclick="filterByIssueCategory(\'{category}\')">'
+                f'<span class="legend-color" style="background:#8b949e;border-radius:2px"></span>'
+                f'{category} ({count})</div>'
+            )
+        html_parts.append('</div>')
 
     html_parts.append('</div>')
     return "\n".join(html_parts)
@@ -153,7 +188,11 @@ ISSUE_BADGE_CSS = """
 .issue-badge.commit { background: #21262d; color: #8b949e; font-family: monospace; }
 #issues-legend { margin-top: 12px; padding-top: 8px; border-top: 1px solid #30363d; }
 #issues-legend b { display: block; margin-bottom: 8px; }
-.legend-item.issue-status .legend-color { border-radius: 2px !important; }
+.legend-item.issue-status .legend-color,
+.legend-item.issue-category .legend-color { border-radius: 2px !important; }
+.issue-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
+.issue-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+.legend-item.issue-category { font-size: 11px; padding-left: 8px; }
 """
 
 
@@ -165,6 +204,15 @@ function filterByStatus(status) {
     if (el) el.classList.add('active');
     currentFilter = 'status:' + status;
     var nodeIds = graphData.statusToNodes[status] || [];
+    applyFilter(nodeIds);
+}
+
+function filterByIssueCategory(category) {
+    document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+    var el = document.querySelector('.legend-item[data-issue-category="' + category + '"]');
+    if (el) el.classList.add('active');
+    currentFilter = 'issue-category:' + category;
+    var nodeIds = graphData.issueCategoryToNodes[category] || [];
     applyFilter(nodeIds);
 }
 """

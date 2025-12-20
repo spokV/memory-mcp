@@ -13,6 +13,7 @@ from ..storage import (
 from .issues import (
     TAG_COLORS,
     build_status_to_nodes,
+    build_issue_category_to_nodes,
     get_issue_node_style,
     is_issue,
     build_issue_legend_html,
@@ -233,6 +234,7 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
+        issue_category_to_nodes = build_issue_category_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
         edges = _build_edges(conn, memories, min_score)
@@ -245,6 +247,7 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
             "sectionToNodes": section_to_nodes,
             "subsectionToNodes": path_to_nodes,
             "statusToNodes": status_to_nodes,
+            "issueCategoryToNodes": issue_category_to_nodes,
             "todoStatusToNodes": todo_status_to_nodes,
             "todoCategoryToNodes": todo_category_to_nodes,
         }
@@ -299,6 +302,7 @@ def export_graph_html(
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
+        issue_category_to_nodes = build_issue_category_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
         edges = _build_edges(conn, memories, min_score)
@@ -318,7 +322,7 @@ def export_graph_html(
         # Build HTML components
         legend_html = _build_legend_html(tag_colors)
         sections_html = _build_sections_html(section_to_nodes, path_to_nodes)
-        issues_legend_html = build_issue_legend_html(status_to_nodes)
+        issues_legend_html = build_issue_legend_html(status_to_nodes, issue_category_to_nodes)
         todos_legend_html = build_todo_legend_html(todo_status_to_nodes, todo_category_to_nodes)
 
         html = build_static_html(
@@ -329,6 +333,7 @@ def export_graph_html(
             section_to_nodes_json=json.dumps(section_to_nodes),
             path_to_nodes_json=json.dumps(path_to_nodes),
             status_to_nodes_json=json.dumps(status_to_nodes),
+            issue_category_to_nodes_json=json.dumps(issue_category_to_nodes),
             todo_status_to_nodes_json=json.dumps(todo_status_to_nodes),
             todo_category_to_nodes_json=json.dumps(todo_category_to_nodes),
             legend_html=legend_html,
