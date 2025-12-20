@@ -141,6 +141,15 @@ def start_graph_server(host: str, port: int) -> None:
 
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
-    aws_profile = os.getenv("AWS_PROFILE", "")
-    profile_param = f"?profile={aws_profile}" if aws_profile else ""
-    print(f"Graph visualization available at http://{host}:{port}/graph{profile_param}", file=sys.stderr)
+
+    # Get bucket name for unique URL
+    bucket_name = ""
+    try:
+        from ..storage import STORAGE_BACKEND
+        if hasattr(STORAGE_BACKEND, 'bucket'):
+            bucket_name = STORAGE_BACKEND.bucket
+    except Exception:
+        pass
+
+    bucket_param = f"?bucket={bucket_name}" if bucket_name else ""
+    print(f"Graph visualization available at http://{host}:{port}/graph{bucket_param}", file=sys.stderr)
