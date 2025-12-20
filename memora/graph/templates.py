@@ -42,7 +42,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 #resize-handle { width: 6px; background: #30363d; cursor: ew-resize; display: none; }
 #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
 #resize-handle.active { display: block; }
-#legend { position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }
+#legend {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(22,27,34,0.95);
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    border-left: 3px solid #8b949e;
+}
+#legend > b { color: #c9d1d9; }
 .legend-item { margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .legend-item:hover { background: rgba(255,255,255,0.1); }
 .legend-item.active { background: rgba(88,166,255,0.3); }
@@ -54,8 +64,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .legend-toggle { cursor: pointer; color: #8b949e; font-size: 11px; margin-left: 4px; }
 .legend-toggle:hover { color: #c9d1d9; }
 #legend .reset:hover { text-decoration: underline; }
-#sections { position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-height: 40vh; overflow-y: auto; white-space: nowrap; }
-#sections b { display: block; margin-bottom: 8px; }
+#sections {
+    position: absolute;
+    bottom: 50px;
+    left: 10px;
+    background: rgba(22,27,34,0.95);
+    padding: 12px;
+    border-radius: 0 6px 6px 0;
+    font-size: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+    white-space: nowrap;
+    border-left: 3px solid #7ee787;
+    border-top: 2px solid #7ee787;
+}
+#sections b { display: block; margin-bottom: 8px; color: #7ee787; }
 .section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }
 .section-item:hover { background: rgba(255,255,255,0.1); }
 .section-item.active { background: rgba(126,231,135,0.3); }
