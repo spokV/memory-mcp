@@ -57,7 +57,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .legend-item:hover { background: rgba(255,255,255,0.1); }
 .legend-item.active { background: rgba(88,166,255,0.3); }
 .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
-.legend-color.triangle { width: 0; height: 0; border-radius: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid currentColor; background: none !important; }
 #legend .reset { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }
 #legend-items { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
 #legend-items.expanded { max-height: 300px; }
@@ -75,13 +74,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     max-height: 40vh;
     overflow-y: auto;
     white-space: nowrap;
-    border-left: 3px solid #7ee787;
-    border-top: 2px solid #7ee787;
+    border-left: 3px solid #a855f7;
+    border-top: 2px solid #a855f7;
 }
-#sections b { display: block; margin-bottom: 8px; color: #7ee787; }
-.section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }
+#sections b { display: block; margin-bottom: 8px; color: #a855f7; }
+.section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #a855f7; }
 .section-item:hover { background: rgba(255,255,255,0.1); }
-.section-item.active { background: rgba(126,231,135,0.3); }
+.section-item.active { background: rgba(168,85,247,0.3); }
 .subsection-item { margin: 2px 0 2px 8px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }
 .subsection-item:hover { background: rgba(255,255,255,0.1); }
 .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
@@ -455,12 +454,12 @@ def get_spa_html() -> str:
             // Build issues legend
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
-                issuesHtml = '<div id="issues-legend"><b>Issues</b>';
+                issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
                 var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
-                    issuesHtml += '<div class="legend-item" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + ';border-radius:2px"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                    issuesHtml += '<div class="legend-item issue-status" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="border-bottom-color:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 // Add components (categories)
                 if (graphData.issueCategoryToNodes && Object.keys(graphData.issueCategoryToNodes).length > 0) {{
@@ -468,7 +467,7 @@ def get_spa_html() -> str:
                     var components = Object.keys(graphData.issueCategoryToNodes).sort();
                     for (var component of components) {{
                         var count = graphData.issueCategoryToNodes[component].length;
-                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color" style="background:#8b949e;border-radius:2px"></span>' + component + ' (' + count + ')</div>';
+                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + component + ' (' + count + ')</div>';
                     }}
                     issuesHtml += '</div>';
                 }}
@@ -479,12 +478,12 @@ def get_spa_html() -> str:
             // Build TODOs legend
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
-                todosHtml = '<div id="todos-legend"><b>TODOs</b>';
+                todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
                 var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
-                    todosHtml += '<div class="legend-item" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color triangle" style="border-bottom-color:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                    todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 // Add categories
                 if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
@@ -492,7 +491,7 @@ def get_spa_html() -> str:
                     var categories = Object.keys(graphData.todoCategoryToNodes).sort();
                     for (var category of categories) {{
                         var count = graphData.todoCategoryToNodes[category].length;
-                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color triangle" style="border-bottom-color:#8b949e"></span>' + category + ' (' + count + ')</div>';
+                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + category + ' (' + count + ')</div>';
                     }}
                     todosHtml += '</div>';
                 }}

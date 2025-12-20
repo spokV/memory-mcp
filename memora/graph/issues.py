@@ -17,10 +17,10 @@ SEVERITY_COLORS = {
     "minor": "#8b949e",       # Gray
 }
 
-# Default tag colors
+# Default tag colors (purple palette for general/knowledge memories)
 TAG_COLORS = [
-    "#58a6ff", "#f78166", "#a371f7", "#7ee787",
-    "#ffa657", "#ff7b72", "#79c0ff", "#d2a8ff"
+    "#a855f7", "#c084fc", "#d8b4fe", "#9333ea",
+    "#7c3aed", "#8b5cf6", "#a78bfa", "#c4b5fd"
 ]
 
 
@@ -58,7 +58,7 @@ def get_issue_node_style(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     severity = get_issue_severity(metadata)
 
     style = {
-        "shape": "square",
+        "shape": "triangle",
         "color": STATUS_COLORS.get(status, STATUS_COLORS["open"]),
     }
 
@@ -189,14 +189,29 @@ ISSUE_BADGE_CSS = """
 #issues-legend {
     margin-top: 16px;
     padding: 12px;
-    border-top: 2px solid #f85149;
-    border-left: 3px solid #f85149;
-    background: rgba(248, 81, 73, 0.05);
+    border-top: 2px solid #58a6ff;
+    border-left: 3px solid #58a6ff;
+    background: rgba(88, 166, 255, 0.05);
     border-radius: 0 6px 6px 0;
 }
-#issues-legend b { display: block; margin-bottom: 8px; color: #ff7b72; }
-.legend-item.issue-status .legend-color,
-.legend-item.issue-category .legend-color { border-radius: 2px !important; }
+#issues-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
+#issues-legend b:hover { text-decoration: underline; }
+#issues-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
+.legend-item.issue-status .legend-color {
+    width: 0 !important;
+    height: 0 !important;
+    border-radius: 0 !important;
+    border-left: 6px solid transparent !important;
+    border-right: 6px solid transparent !important;
+    border-bottom-width: 10px !important;
+    border-bottom-style: solid !important;
+    background: none !important;
+}
+.legend-item.issue-category .legend-color {
+    width: 5px !important;
+    height: 5px !important;
+    border-radius: 50% !important;
+}
 .issue-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
 .issue-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
 .legend-item.issue-category { font-size: 11px; padding-left: 8px; }
@@ -205,6 +220,15 @@ ISSUE_BADGE_CSS = """
 
 # JavaScript for issue filtering (to be included in templates)
 ISSUE_FILTER_JS = """
+function filterAllIssues() {
+    document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+    document.querySelector('#issues-legend b').classList.add('active');
+    currentFilter = 'all-issues';
+    var nodeIds = [];
+    Object.values(graphData.statusToNodes || {}).forEach(ids => nodeIds.push(...ids));
+    applyFilter(nodeIds);
+}
+
 function filterByStatus(status) {
     document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
     var el = document.querySelector('.legend-item[data-status="' + status + '"]');

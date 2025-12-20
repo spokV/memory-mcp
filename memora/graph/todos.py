@@ -52,7 +52,7 @@ def get_todo_node_style(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     priority = get_todo_priority(metadata)
 
     style = {
-        "shape": "triangle",
+        "shape": "square",
         "color": TODO_STATUS_COLORS.get(status, TODO_STATUS_COLORS["open"]),
     }
 
@@ -165,11 +165,16 @@ TODO_BADGE_CSS = """
     background: rgba(88, 166, 255, 0.05);
     border-radius: 0 6px 6px 0;
 }
-#todos-legend b { display: block; margin-bottom: 8px; color: #58a6ff; }
-.legend-item.todo-status .legend-color,
+#todos-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
+#todos-legend b:hover { text-decoration: underline; }
+#todos-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
+.legend-item.todo-status .legend-color {
+    border-radius: 2px !important;
+}
 .legend-item.todo-category .legend-color {
-    clip-path: polygon(50% 0%, 0% 100%, 100% 100%) !important;
-    border-radius: 0 !important;
+    width: 5px !important;
+    height: 5px !important;
+    border-radius: 50% !important;
 }
 .todo-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
 .todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
@@ -179,6 +184,15 @@ TODO_BADGE_CSS = """
 
 # JavaScript for TODO filtering (to be included in templates)
 TODO_FILTER_JS = """
+function filterAllTodos() {
+    document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+    document.querySelector('#todos-legend b').classList.add('active');
+    currentFilter = 'all-todos';
+    var nodeIds = [];
+    Object.values(graphData.todoStatusToNodes || {}).forEach(ids => nodeIds.push(...ids));
+    applyFilter(nodeIds);
+}
+
 function filterByTodoStatus(status) {
     document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
     var el = document.querySelector('.legend-item[data-todo-status="' + status + '"]');
