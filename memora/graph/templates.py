@@ -68,7 +68,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 # Additional CSS for dynamic (SPA) graph
 SPA_CSS = """
 #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 16px; }
-#search-box { position: absolute; top: 10px; right: 10px; background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
+#search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
 #search-box input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; width: 200px; }
 #search-box input:focus { outline: none; border-color: #58a6ff; }
 """
