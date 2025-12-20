@@ -141,6 +141,23 @@ function renderIssueBadges(metadata) {
     html += '</div>';
     return html;
 }
+
+function renderTodoBadges(metadata) {
+    if (!metadata || metadata.type !== 'todo') return '';
+    var status = metadata.status || 'open';
+    var priority = metadata.priority || 'medium';
+    var category = metadata.category || '';
+
+    var statusColors = {open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'};
+    var priorityColors = {high: '#f85149', medium: '#d29922', low: '#8b949e'};
+
+    var html = '<div class="todo-badges">';
+    html += '<span class="todo-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="todo-badge" style="background:' + (priorityColors[priority] || '#8b949e') + '">' + priority + '</span>';
+    if (category) html += '<span class="todo-badge category">' + category + '</span>';
+    html += '</div>';
+    return html;
+}
 """
 
 # JavaScript for filtering
@@ -234,8 +251,8 @@ function closePanel() {
 function showPanel(mem) {
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
-    // Show issue badges if applicable
-    var badgesHtml = renderIssueBadges(mem.metadata);
+    // Show issue or TODO badges if applicable
+    var badgesHtml = renderIssueBadges(mem.metadata) + renderTodoBadges(mem.metadata);
     document.getElementById('panel-meta').innerHTML = badgesHtml + 'Created: ' + mem.created;
 
     document.getElementById('panel-tags').innerHTML = mem.tags.map(function(t) {
