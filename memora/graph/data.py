@@ -65,8 +65,25 @@ def _build_tag_colors(memories: List[Dict]) -> Dict[str, str]:
     return tag_colors
 
 
-def _build_nodes(memories: List[Dict], tag_colors: Dict[str, str]) -> List[Dict]:
+def _count_connections(edges: List[Dict]) -> Dict[int, int]:
+    """Count connections per node from edge list."""
+    counts: Dict[int, int] = {}
+    for edge in edges:
+        from_id = edge["from"]
+        to_id = edge["to"]
+        counts[from_id] = counts.get(from_id, 0) + 1
+        counts[to_id] = counts.get(to_id, 0) + 1
+    return counts
+
+
+def _build_nodes(
+    memories: List[Dict],
+    tag_colors: Dict[str, str],
+    connection_counts: Optional[Dict[int, int]] = None,
+) -> List[Dict]:
     """Build vis.js node objects from memories."""
+    import math
+
     nodes = []
     for m in memories:
         tags = m.get("tags", [])
@@ -76,11 +93,18 @@ def _build_nodes(memories: List[Dict], tag_colors: Dict[str, str]) -> List[Dict]
         content = m["content"]
         label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
 
+        # Calculate node size based on connections (like Connected Papers)
+        connections = connection_counts.get(m["id"], 0) if connection_counts else 0
+        # Use logarithmic scaling: base size 12, grows with connections
+        # Min size 12, max size ~40
+        node_size = 12 + min(28, int(math.log1p(connections) * 8))
+
         node = {
             "id": m["id"],
             "label": label + "..." if len(content) > 35 else label,
-            "title": f"Memory #{m['id']}",
+            "title": f"Memory #{m['id']} ({connections} connections)",
             "color": tag_colors[primary_tag],
+            "size": node_size,
         }
 
         # Apply issue-specific styling
@@ -229,15 +253,18 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
         if rebuild:
             rebuild_crossrefs(conn)
 
+        # Build edges first to calculate connection counts for node sizing
+        edges = _build_edges(conn, memories, min_score)
+        connection_counts = _count_connections(edges)
+
         tag_colors = _build_tag_colors(memories)
-        nodes = _build_nodes(memories, tag_colors)
+        nodes = _build_nodes(memories, tag_colors, connection_counts)
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
         issue_category_to_nodes = build_issue_category_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
-        edges = _build_edges(conn, memories, min_score)
 
         return {
             "nodes": nodes,
@@ -297,15 +324,18 @@ def export_graph_html(
 
         rebuild_crossrefs(conn)
 
+        # Build edges first to calculate connection counts for node sizing
+        edges = _build_edges(conn, memories, min_score)
+        connection_counts = _count_connections(edges)
+
         tag_colors = _build_tag_colors(memories)
-        nodes = _build_nodes(memories, tag_colors)
+        nodes = _build_nodes(memories, tag_colors, connection_counts)
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
         issue_category_to_nodes = build_issue_category_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
-        edges = _build_edges(conn, memories, min_score)
 
         # Build memories data for inline display
         memories_data = {}
