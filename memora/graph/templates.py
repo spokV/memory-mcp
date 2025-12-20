@@ -432,7 +432,7 @@ def get_spa_html() -> str:
             // Build issues legend
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
-                issuesHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #30363d"><b>Issues</b></div>';
+                issuesHtml = '<div id="issues-legend"><b>Issues</b>';
                 var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
@@ -449,13 +449,14 @@ def get_spa_html() -> str:
                     }}
                     issuesHtml += '</div>';
                 }}
+                issuesHtml += '</div>';
             }}
             document.getElementById('issues-legend-items').innerHTML = issuesHtml;
 
             // Build TODOs legend
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
-                todosHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #30363d"><b>TODOs</b></div>';
+                todosHtml = '<div id="todos-legend"><b>TODOs</b>';
                 var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
@@ -472,6 +473,7 @@ def get_spa_html() -> str:
                     }}
                     todosHtml += '</div>';
                 }}
+                todosHtml += '</div>';
             }}
             document.getElementById('todos-legend-items').innerHTML = todosHtml;
 

@@ -186,8 +186,15 @@ ISSUE_BADGE_CSS = """
 }
 .issue-badge.component { background: #30363d; color: #c9d1d9; }
 .issue-badge.commit { background: #21262d; color: #8b949e; font-family: monospace; }
-#issues-legend { margin-top: 12px; padding-top: 8px; border-top: 1px solid #30363d; }
-#issues-legend b { display: block; margin-bottom: 8px; }
+#issues-legend {
+    margin-top: 16px;
+    padding: 12px;
+    border-top: 2px solid #f85149;
+    border-left: 3px solid #f85149;
+    background: rgba(248, 81, 73, 0.05);
+    border-radius: 0 6px 6px 0;
+}
+#issues-legend b { display: block; margin-bottom: 8px; color: #ff7b72; }
 .legend-item.issue-status .legend-color,
 .legend-item.issue-category .legend-color { border-radius: 2px !important; }
 .issue-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }

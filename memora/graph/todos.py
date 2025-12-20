@@ -157,8 +157,15 @@ TODO_BADGE_CSS = """
 .todo-badge.priority-high { background: #f85149; }
 .todo-badge.priority-medium { background: #d29922; }
 .todo-badge.priority-low { background: #8b949e; }
-#todos-legend { margin-top: 12px; padding-top: 8px; border-top: 1px solid #30363d; }
-#todos-legend b { display: block; margin-bottom: 8px; }
+#todos-legend {
+    margin-top: 16px;
+    padding: 12px;
+    border-top: 2px solid #58a6ff;
+    border-left: 3px solid #58a6ff;
+    background: rgba(88, 166, 255, 0.05);
+    border-radius: 0 6px 6px 0;
+}
+#todos-legend b { display: block; margin-bottom: 8px; color: #58a6ff; }
 .legend-item.todo-status .legend-color,
 .legend-item.todo-category .legend-color {
     clip-path: polygon(50% 0%, 0% 100%, 100% 100%) !important;
