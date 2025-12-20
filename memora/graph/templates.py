@@ -42,23 +42,45 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 #resize-handle { width: 6px; background: #30363d; cursor: ew-resize; display: none; }
 #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
 #resize-handle.active { display: block; }
-#legend { position: absolute; top: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; }
+#legend {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(22,27,34,0.95);
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    border-left: 3px solid #8b949e;
+}
+#legend > b { color: #c9d1d9; }
 .legend-item { margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .legend-item:hover { background: rgba(255,255,255,0.1); }
 .legend-item.active { background: rgba(88,166,255,0.3); }
 .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
-.legend-color.triangle { width: 0; height: 0; border-radius: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid currentColor; background: none !important; }
 #legend .reset { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }
 #legend-items { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
 #legend-items.expanded { max-height: 300px; }
 .legend-toggle { cursor: pointer; color: #8b949e; font-size: 11px; margin-left: 4px; }
 .legend-toggle:hover { color: #c9d1d9; }
 #legend .reset:hover { text-decoration: underline; }
-#sections { position: absolute; bottom: 50px; left: 10px; background: rgba(22,27,34,0.9); padding: 12px; border-radius: 6px; font-size: 12px; max-height: 40vh; overflow-y: auto; white-space: nowrap; }
-#sections b { display: block; margin-bottom: 8px; }
-.section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #7ee787; }
+#sections {
+    position: absolute;
+    bottom: 50px;
+    left: 10px;
+    background: rgba(22,27,34,0.95);
+    padding: 12px;
+    border-radius: 0 6px 6px 0;
+    font-size: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+    white-space: nowrap;
+    border-left: 3px solid #a855f7;
+    border-top: 2px solid #a855f7;
+}
+#sections b { display: block; margin-bottom: 8px; color: #a855f7; }
+.section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #a855f7; }
 .section-item:hover { background: rgba(255,255,255,0.1); }
-.section-item.active { background: rgba(126,231,135,0.3); }
+.section-item.active { background: rgba(168,85,247,0.3); }
 .subsection-item { margin: 2px 0 2px 8px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }
 .subsection-item:hover { background: rgba(255,255,255,0.1); }
 .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
@@ -68,7 +90,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 # Additional CSS for dynamic (SPA) graph
 SPA_CSS = """
 #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 16px; }
-#search-box { position: absolute; top: 10px; right: 10px; background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
+#search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
 #search-box input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; width: 200px; }
 #search-box input:focus { outline: none; border-color: #58a6ff; }
 """
@@ -138,6 +160,23 @@ function renderIssueBadges(metadata) {
     html += '<span class="issue-badge" style="background:' + (severityColors[severity] || '#8b949e') + '">' + severity + '</span>';
     if (component) html += '<span class="issue-badge component">' + component + '</span>';
     if (commit) html += '<span class="issue-badge commit">#' + commit.slice(0,7) + '</span>';
+    html += '</div>';
+    return html;
+}
+
+function renderTodoBadges(metadata) {
+    if (!metadata || metadata.type !== 'todo') return '';
+    var status = metadata.status || 'open';
+    var priority = metadata.priority || 'medium';
+    var category = metadata.category || '';
+
+    var statusColors = {open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'};
+    var priorityColors = {high: '#f85149', medium: '#d29922', low: '#8b949e'};
+
+    var html = '<div class="todo-badges">';
+    html += '<span class="todo-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="todo-badge" style="background:' + (priorityColors[priority] || '#8b949e') + '">' + priority + '</span>';
+    if (category) html += '<span class="todo-badge category">' + category + '</span>';
     html += '</div>';
     return html;
 }
@@ -234,8 +273,8 @@ function closePanel() {
 function showPanel(mem) {
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
-    // Show issue badges if applicable
-    var badgesHtml = renderIssueBadges(mem.metadata);
+    // Show issue or TODO badges if applicable
+    var badgesHtml = renderIssueBadges(mem.metadata) + renderTodoBadges(mem.metadata);
     document.getElementById('panel-meta').innerHTML = badgesHtml + 'Created: ' + mem.created;
 
     document.getElementById('panel-tags').innerHTML = mem.tags.map(function(t) {
@@ -274,7 +313,9 @@ def build_static_html(
     section_to_nodes_json: str,
     path_to_nodes_json: str,
     status_to_nodes_json: str,
+    issue_category_to_nodes_json: str,
     todo_status_to_nodes_json: str,
+    todo_category_to_nodes_json: str,
     legend_html: str,
     sections_html: str,
     issues_legend_html: str,
@@ -313,11 +354,13 @@ def build_static_html(
         var sectionToNodes = {section_to_nodes_json};
         var subsectionToNodes = {path_to_nodes_json};
         var statusToNodes = {status_to_nodes_json};
+        var issueCategoryToNodes = {issue_category_to_nodes_json};
         var todoStatusToNodes = {todo_status_to_nodes_json};
+        var todoCategoryToNodes = {todo_category_to_nodes_json};
         var allNodes = {nodes_json};
         var allEdges = {edges_json};
         var currentFilter = null;
-        var graphData = {{ statusToNodes: statusToNodes, todoStatusToNodes: todoStatusToNodes }};
+        var graphData = {{ statusToNodes: statusToNodes, issueCategoryToNodes: issueCategoryToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes }};
 
         {js}
 
@@ -411,26 +454,48 @@ def get_spa_html() -> str:
             // Build issues legend
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
-                issuesHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #30363d"><b>Issues</b></div>';
+                issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
                 var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
-                    issuesHtml += '<div class="legend-item" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + ';border-radius:2px"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                    issuesHtml += '<div class="legend-item issue-status" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="border-bottom-color:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
+                // Add components (categories)
+                if (graphData.issueCategoryToNodes && Object.keys(graphData.issueCategoryToNodes).length > 0) {{
+                    issuesHtml += '<div class="issue-categories"><b>Components</b>';
+                    var components = Object.keys(graphData.issueCategoryToNodes).sort();
+                    for (var component of components) {{
+                        var count = graphData.issueCategoryToNodes[component].length;
+                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + component + ' (' + count + ')</div>';
+                    }}
+                    issuesHtml += '</div>';
+                }}
+                issuesHtml += '</div>';
             }}
             document.getElementById('issues-legend-items').innerHTML = issuesHtml;
 
             // Build TODOs legend
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
-                todosHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #30363d"><b>TODOs</b></div>';
+                todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
                 var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
-                    todosHtml += '<div class="legend-item" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color triangle" style="border-bottom-color:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                    todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
+                // Add categories
+                if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
+                    todosHtml += '<div class="todo-categories"><b>Categories</b>';
+                    var categories = Object.keys(graphData.todoCategoryToNodes).sort();
+                    for (var category of categories) {{
+                        var count = graphData.todoCategoryToNodes[category].length;
+                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + category + ' (' + count + ')</div>';
+                    }}
+                    todosHtml += '</div>';
+                }}
+                todosHtml += '</div>';
             }}
             document.getElementById('todos-legend-items').innerHTML = todosHtml;
 
