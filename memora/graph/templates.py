@@ -292,6 +292,7 @@ def build_static_html(
     path_to_nodes_json: str,
     status_to_nodes_json: str,
     todo_status_to_nodes_json: str,
+    todo_category_to_nodes_json: str,
     legend_html: str,
     sections_html: str,
     issues_legend_html: str,
@@ -331,10 +332,11 @@ def build_static_html(
         var subsectionToNodes = {path_to_nodes_json};
         var statusToNodes = {status_to_nodes_json};
         var todoStatusToNodes = {todo_status_to_nodes_json};
+        var todoCategoryToNodes = {todo_category_to_nodes_json};
         var allNodes = {nodes_json};
         var allEdges = {edges_json};
         var currentFilter = null;
-        var graphData = {{ statusToNodes: statusToNodes, todoStatusToNodes: todoStatusToNodes }};
+        var graphData = {{ statusToNodes: statusToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes }};
 
         {js}
 
@@ -447,6 +449,16 @@ def get_spa_html() -> str:
                     var color = todoStatusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     todosHtml += '<div class="legend-item" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color triangle" style="border-bottom-color:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                }}
+                // Add categories
+                if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
+                    todosHtml += '<div class="todo-categories"><b>Categories</b>';
+                    var categories = Object.keys(graphData.todoCategoryToNodes).sort();
+                    for (var category of categories) {{
+                        var count = graphData.todoCategoryToNodes[category].length;
+                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color triangle" style="border-bottom-color:#8b949e"></span>' + category + ' (' + count + ')</div>';
+                    }}
+                    todosHtml += '</div>';
                 }}
             }}
             document.getElementById('todos-legend-items').innerHTML = todosHtml;

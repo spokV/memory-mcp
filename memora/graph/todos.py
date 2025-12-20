@@ -82,13 +82,35 @@ def build_todo_status_to_nodes(memories: List[Dict]) -> Dict[str, List[int]]:
     return status_to_nodes
 
 
-def build_todo_legend_html(status_to_nodes: Dict[str, List[int]]) -> str:
-    """Build HTML for TODO status legend section."""
+def build_todo_category_to_nodes(memories: List[Dict]) -> Dict[str, List[int]]:
+    """Build mapping of TODO category -> list of node IDs.
+
+    Only includes memories that are TODOs (metadata.type == 'todo').
+    """
+    category_to_nodes: Dict[str, List[int]] = {}
+
+    for m in memories:
+        meta = m.get("metadata") or {}
+        if is_todo(meta):
+            category = meta.get("category", "uncategorized")
+            if category not in category_to_nodes:
+                category_to_nodes[category] = []
+            category_to_nodes[category].append(m["id"])
+
+    return category_to_nodes
+
+
+def build_todo_legend_html(
+    status_to_nodes: Dict[str, List[int]],
+    category_to_nodes: Optional[Dict[str, List[int]]] = None,
+) -> str:
+    """Build HTML for TODO status and category legend section."""
     if not status_to_nodes:
         return ""
 
     html_parts = ['<div id="todos-legend"><b>TODOs</b>']
 
+    # Status items
     for status, color in TODO_STATUS_COLORS.items():
         count = len(status_to_nodes.get(status, []))
         if count > 0:
@@ -100,6 +122,20 @@ def build_todo_legend_html(status_to_nodes: Dict[str, List[int]]) -> str:
                 f'clip-path:polygon(50% 0%, 0% 100%, 100% 100%)"></span>'
                 f'{display_name} ({count})</div>'
             )
+
+    # Category items
+    if category_to_nodes:
+        html_parts.append('<div class="todo-categories"><b>Categories</b>')
+        for category in sorted(category_to_nodes.keys()):
+            count = len(category_to_nodes[category])
+            html_parts.append(
+                f'<div class="legend-item todo-category" data-todo-category="{category}" '
+                f'onclick="filterByTodoCategory(\'{category}\')">'
+                f'<span class="legend-color" style="background:#8b949e;'
+                f'clip-path:polygon(50% 0%, 0% 100%, 100% 100%)"></span>'
+                f'{category} ({count})</div>'
+            )
+        html_parts.append('</div>')
 
     html_parts.append('</div>')
     return "\n".join(html_parts)
@@ -123,10 +159,14 @@ TODO_BADGE_CSS = """
 .todo-badge.priority-low { background: #8b949e; }
 #todos-legend { margin-top: 12px; padding-top: 8px; border-top: 1px solid #30363d; }
 #todos-legend b { display: block; margin-bottom: 8px; }
-.legend-item.todo-status .legend-color {
+.legend-item.todo-status .legend-color,
+.legend-item.todo-category .legend-color {
     clip-path: polygon(50% 0%, 0% 100%, 100% 100%) !important;
     border-radius: 0 !important;
 }
+.todo-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
+.todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+.legend-item.todo-category { font-size: 11px; padding-left: 8px; }
 """
 
 
@@ -138,6 +178,15 @@ function filterByTodoStatus(status) {
     if (el) el.classList.add('active');
     currentFilter = 'todo-status:' + status;
     var nodeIds = graphData.todoStatusToNodes[status] || [];
+    applyFilter(nodeIds);
+}
+
+function filterByTodoCategory(category) {
+    document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+    var el = document.querySelector('.legend-item[data-todo-category="' + category + '"]');
+    if (el) el.classList.add('active');
+    currentFilter = 'todo-category:' + category;
+    var nodeIds = graphData.todoCategoryToNodes[category] || [];
     applyFilter(nodeIds);
 }
 """

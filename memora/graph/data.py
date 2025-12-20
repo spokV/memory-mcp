@@ -19,6 +19,7 @@ from .issues import (
 )
 from .todos import (
     build_todo_status_to_nodes,
+    build_todo_category_to_nodes,
     get_todo_node_style,
     is_todo,
     build_todo_legend_html,
@@ -233,6 +234,7 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
+        todo_category_to_nodes = build_todo_category_to_nodes(memories)
         edges = _build_edges(conn, memories, min_score)
 
         return {
@@ -244,6 +246,7 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
             "subsectionToNodes": path_to_nodes,
             "statusToNodes": status_to_nodes,
             "todoStatusToNodes": todo_status_to_nodes,
+            "todoCategoryToNodes": todo_category_to_nodes,
         }
 
     finally:
@@ -297,6 +300,7 @@ def export_graph_html(
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
+        todo_category_to_nodes = build_todo_category_to_nodes(memories)
         edges = _build_edges(conn, memories, min_score)
 
         # Build memories data for inline display
@@ -315,7 +319,7 @@ def export_graph_html(
         legend_html = _build_legend_html(tag_colors)
         sections_html = _build_sections_html(section_to_nodes, path_to_nodes)
         issues_legend_html = build_issue_legend_html(status_to_nodes)
-        todos_legend_html = build_todo_legend_html(todo_status_to_nodes)
+        todos_legend_html = build_todo_legend_html(todo_status_to_nodes, todo_category_to_nodes)
 
         html = build_static_html(
             nodes_json=json.dumps(nodes),
@@ -326,6 +330,7 @@ def export_graph_html(
             path_to_nodes_json=json.dumps(path_to_nodes),
             status_to_nodes_json=json.dumps(status_to_nodes),
             todo_status_to_nodes_json=json.dumps(todo_status_to_nodes),
+            todo_category_to_nodes_json=json.dumps(todo_category_to_nodes),
             legend_html=legend_html,
             sections_html=sections_html,
             issues_legend_html=issues_legend_html,
