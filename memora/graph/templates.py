@@ -372,7 +372,7 @@ def build_static_html(
         var options = {{
             nodes: {{ shape: "dot", size: 16, font: {{ color: "#c9d1d9", size: 11 }}, borderWidth: 2 }},
             edges: {{ color: {{ color: "#30363d", opacity: 0.6 }}, smooth: {{ type: "continuous" }} }},
-            physics: {{ barnesHut: {{ gravitationalConstant: -2500, springLength: 120, damping: 0.3 }} }},
+            physics: {{ barnesHut: {{ gravitationalConstant: -2000, springLength: 95, springConstant: 0.04, damping: 0.3, avoidOverlap: 0.3 }} }},
             interaction: {{ hover: true, tooltipDelay: 100 }}
         }};
         var network = new vis.Network(container, data, options);
@@ -543,7 +543,7 @@ def get_spa_html() -> str:
             var options = {{
                 nodes: {{ shape: 'dot', size: 16, font: {{ color: '#c9d1d9', size: 11 }}, borderWidth: 2 }},
                 edges: {{ color: {{ color: '#30363d', opacity: 0.6 }}, smooth: {{ type: 'continuous' }} }},
-                physics: {{ barnesHut: {{ gravitationalConstant: -2500, springLength: 120, damping: 0.3 }} }},
+                physics: {{ barnesHut: {{ gravitationalConstant: -2000, springLength: 95, springConstant: 0.04, damping: 0.3, avoidOverlap: 0.3 }} }},
                 interaction: {{ hover: true, tooltipDelay: 100 }}
             }};
             network = new vis.Network(container, data, options);

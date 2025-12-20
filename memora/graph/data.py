@@ -98,6 +98,9 @@ def _build_nodes(
         # Use logarithmic scaling: base size 12, grows with connections
         # Min size 12, max size ~40
         node_size = 12 + min(28, int(math.log1p(connections) * 8))
+        # Mass affects physics: higher mass = more central, lower mass = pushed to edges
+        # Nodes with 0 connections have mass 0.5, highly connected nodes up to mass 3
+        node_mass = 0.5 + min(2.5, math.log1p(connections) * 0.8)
 
         node = {
             "id": m["id"],
@@ -105,6 +108,7 @@ def _build_nodes(
             "title": f"Memory #{m['id']} ({connections} connections)",
             "color": tag_colors[primary_tag],
             "size": node_size,
+            "mass": node_mass,
         }
 
         # Apply issue-specific styling
