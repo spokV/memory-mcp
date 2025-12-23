@@ -124,7 +124,7 @@ def build_issue_legend_html(
             html_parts.append(
                 f'<div class="legend-item issue-status" data-status="{status}" '
                 f'onclick="filterByStatus(\'{status}\')">'
-                f'<span class="legend-color" style="background:{color};border-radius:2px"></span>'
+                f'<span class="legend-color" style="background:{color}"></span>'
                 f'{display_name} ({count})</div>'
             )
 
@@ -136,7 +136,7 @@ def build_issue_legend_html(
             html_parts.append(
                 f'<div class="legend-item issue-category" data-issue-category="{category}" '
                 f'onclick="filterByIssueCategory(\'{category}\')">'
-                f'<span class="legend-color" style="background:#8b949e;border-radius:2px"></span>'
+                f'<span class="legend-color small" style="background:#8b949e"></span>'
                 f'{category} ({count})</div>'
             )
         html_parts.append('</div>')
@@ -197,20 +197,9 @@ ISSUE_BADGE_CSS = """
 #issues-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
 #issues-legend b:hover { text-decoration: underline; }
 #issues-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
-.legend-item.issue-status .legend-color {
-    width: 0 !important;
-    height: 0 !important;
-    border-radius: 0 !important;
-    border-left: 6px solid transparent !important;
-    border-right: 6px solid transparent !important;
-    border-bottom-width: 10px !important;
-    border-bottom-style: solid !important;
-    background: none !important;
-}
 .legend-item.issue-category .legend-color {
-    width: 5px !important;
-    height: 5px !important;
-    border-radius: 50% !important;
+    width: 8px !important;
+    height: 8px !important;
 }
 .issue-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
 .issue-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
