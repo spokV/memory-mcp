@@ -184,6 +184,12 @@ function renderTodoBadges(metadata) {
 
 # JavaScript for filtering
 FILTER_JS = """
+function toggleSection(el) {
+    var parent = el.parentElement;
+    parent.classList.toggle('collapsed');
+    el.textContent = parent.classList.contains('collapsed') ? '[+]' : '[-]';
+}
+
 function filterByTag(tag) {
     document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
     var el = document.querySelector('.legend-item[data-tag="' + tag + '"]');
@@ -463,13 +469,13 @@ def get_spa_html() -> str:
                 }}
                 // Add components (categories)
                 if (graphData.issueCategoryToNodes && Object.keys(graphData.issueCategoryToNodes).length > 0) {{
-                    issuesHtml += '<div class="issue-categories"><b>Components</b>';
+                    issuesHtml += '<div class="issue-categories collapsed"><b>Components</b><span class="legend-toggle" onclick="toggleSection(this)">[+]</span><div class="section-items">';
                     var components = Object.keys(graphData.issueCategoryToNodes).sort();
                     for (var component of components) {{
                         var count = graphData.issueCategoryToNodes[component].length;
-                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + component + ' (' + count + ')</div>';
+                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color small" style="background:#8b949e"></span>' + component + ' (' + count + ')</div>';
                     }}
-                    issuesHtml += '</div>';
+                    issuesHtml += '</div></div>';
                 }}
                 issuesHtml += '</div>';
             }}
@@ -487,13 +493,13 @@ def get_spa_html() -> str:
                 }}
                 // Add categories
                 if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
-                    todosHtml += '<div class="todo-categories"><b>Categories</b>';
+                    todosHtml += '<div class="todo-categories collapsed"><b>Categories</b><span class="legend-toggle" onclick="toggleSection(this)">[+]</span><div class="section-items">';
                     var categories = Object.keys(graphData.todoCategoryToNodes).sort();
                     for (var category of categories) {{
                         var count = graphData.todoCategoryToNodes[category].length;
-                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color" style="background:#8b949e"></span>' + category + ' (' + count + ')</div>';
+                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color small" style="background:#8b949e"></span>' + category + ' (' + count + ')</div>';
                     }}
-                    todosHtml += '</div>';
+                    todosHtml += '</div></div>';
                 }}
                 todosHtml += '</div>';
             }}

@@ -124,7 +124,7 @@ def build_todo_legend_html(
 
     # Category items
     if category_to_nodes:
-        html_parts.append('<div class="todo-categories"><b>Categories</b>')
+        html_parts.append('<div class="todo-categories collapsed"><b>Categories</b><span class="legend-toggle" onclick="toggleSection(this)">[+]</span><div class="section-items">')
         for category in sorted(category_to_nodes.keys()):
             count = len(category_to_nodes[category])
             html_parts.append(
@@ -133,7 +133,7 @@ def build_todo_legend_html(
                 f'<span class="legend-color small" style="background:#8b949e"></span>'
                 f'{category} ({count})</div>'
             )
-        html_parts.append('</div>')
+        html_parts.append('</div></div>')
 
     html_parts.append('</div>')
     return "\n".join(html_parts)
@@ -171,7 +171,9 @@ TODO_BADGE_CSS = """
     height: 8px !important;
 }
 .todo-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
-.todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+.todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; display: inline !important; }
+.todo-categories .legend-toggle { margin-left: 4px; }
+.todo-categories.collapsed .section-items { display: none; }
 .legend-item.todo-category { font-size: 11px; padding-left: 8px; }
 """
 
