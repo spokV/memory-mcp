@@ -510,6 +510,106 @@ def _find_similar_for_consolidation(
 
 
 @mcp.tool()
+async def memory_create_issue(
+    content: str,
+    status: str = "open",
+    severity: str = "minor",
+    component: Optional[str] = None,
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new issue/bug memory.
+
+    Args:
+        content: Description of the issue
+        status: Issue status - "open" (default), "in_progress", "resolved", "wontfix"
+        severity: Issue severity - "critical", "major", "minor" (default)
+        component: Component/area affected (e.g., "graph", "storage", "api")
+        category: Issue category (e.g., "bug", "enhancement", "performance")
+
+    Returns:
+        Created issue memory with auto-assigned tag "memora/issues"
+    """
+    # Validate status
+    valid_statuses = {"open", "in_progress", "resolved", "wontfix"}
+    if status not in valid_statuses:
+        return {"error": "invalid_status", "message": f"Status must be one of: {', '.join(valid_statuses)}"}
+
+    # Validate severity
+    valid_severities = {"critical", "major", "minor"}
+    if severity not in valid_severities:
+        return {"error": "invalid_severity", "message": f"Severity must be one of: {', '.join(valid_severities)}"}
+
+    # Build metadata
+    metadata: Dict[str, Any] = {
+        "type": "issue",
+        "status": status,
+        "severity": severity,
+    }
+    if component:
+        metadata["component"] = component
+    if category:
+        metadata["category"] = category
+
+    # Create with auto-tag
+    tags = ["memora/issues"]
+
+    try:
+        record = _create_memory(content.strip(), metadata, tags)
+    except ValueError as exc:
+        return {"error": "invalid_input", "message": str(exc)}
+
+    return {"memory": record}
+
+
+@mcp.tool()
+async def memory_create_todo(
+    content: str,
+    status: str = "open",
+    priority: str = "medium",
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new TODO/task memory.
+
+    Args:
+        content: Description of the task
+        status: Task status - "open" (default), "in_progress", "completed", "blocked"
+        priority: Task priority - "high", "medium" (default), "low"
+        category: Task category (e.g., "cloud-backend", "graph-visualization", "docs")
+
+    Returns:
+        Created TODO memory with auto-assigned tag "memora/todos"
+    """
+    # Validate status
+    valid_statuses = {"open", "in_progress", "completed", "blocked"}
+    if status not in valid_statuses:
+        return {"error": "invalid_status", "message": f"Status must be one of: {', '.join(valid_statuses)}"}
+
+    # Validate priority
+    valid_priorities = {"high", "medium", "low"}
+    if priority not in valid_priorities:
+        return {"error": "invalid_priority", "message": f"Priority must be one of: {', '.join(valid_priorities)}"}
+
+    # Build metadata
+    metadata: Dict[str, Any] = {
+        "type": "todo",
+        "status": status,
+        "priority": priority,
+    }
+    if category:
+        metadata["category"] = category
+
+    # Create with auto-tag
+    tags = ["memora/todos"]
+
+    try:
+        record = _create_memory(content.strip(), metadata, tags)
+    except ValueError as exc:
+        return {"error": "invalid_input", "message": str(exc)}
+
+    return {"memory": record}
+
+
+@mcp.tool()
 async def memory_list(
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
