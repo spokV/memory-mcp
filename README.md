@@ -175,6 +175,22 @@ memory_export_graph(output_path="~/memories_graph.html", min_score=0.25)
 
 Interactive vis.js graph with tag/section filtering, memory tooltips, Mermaid diagram rendering, and auto-resized image thumbnails. Click nodes to view content, drag to explore.
 
+## Graph Color Scheme
+
+| Type | Color | Meaning |
+|------|-------|---------|
+| **Tags** | Purple shades | Different tags get different purple tones |
+| **Issues** | Red | Open |
+| | Orange | In Progress |
+| | Green | Resolved |
+| | Gray | Won't Fix |
+| **TODOs** | Blue | Open |
+| | Orange | In Progress |
+| | Green | Completed |
+| | Red | Blocked |
+
+Node size reflects connection count (more connections = larger node).
+
 ## Live Graph Server
 
 A built-in HTTP server starts automatically with the MCP server, serving the graph visualization on-demand.
