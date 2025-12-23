@@ -52,7 +52,7 @@ def get_todo_node_style(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     priority = get_todo_priority(metadata)
 
     style = {
-        "shape": "square",
+        "shape": "dot",
         "color": TODO_STATUS_COLORS.get(status, TODO_STATUS_COLORS["open"]),
     }
 
@@ -118,8 +118,7 @@ def build_todo_legend_html(
             html_parts.append(
                 f'<div class="legend-item todo-status" data-todo-status="{status}" '
                 f'onclick="filterByTodoStatus(\'{status}\')">'
-                f'<span class="legend-color" style="background:{color};'
-                f'clip-path:polygon(50% 0%, 0% 100%, 100% 100%)"></span>'
+                f'<span class="legend-color" style="background:{color}"></span>'
                 f'{display_name} ({count})</div>'
             )
 
@@ -131,8 +130,7 @@ def build_todo_legend_html(
             html_parts.append(
                 f'<div class="legend-item todo-category" data-todo-category="{category}" '
                 f'onclick="filterByTodoCategory(\'{category}\')">'
-                f'<span class="legend-color" style="background:#8b949e;'
-                f'clip-path:polygon(50% 0%, 0% 100%, 100% 100%)"></span>'
+                f'<span class="legend-color small" style="background:#8b949e"></span>'
                 f'{category} ({count})</div>'
             )
         html_parts.append('</div>')
@@ -168,13 +166,9 @@ TODO_BADGE_CSS = """
 #todos-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
 #todos-legend b:hover { text-decoration: underline; }
 #todos-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
-.legend-item.todo-status .legend-color {
-    border-radius: 2px !important;
-}
 .legend-item.todo-category .legend-color {
-    width: 5px !important;
-    height: 5px !important;
-    border-radius: 50% !important;
+    width: 8px !important;
+    height: 8px !important;
 }
 .todo-categories { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; }
 .todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
