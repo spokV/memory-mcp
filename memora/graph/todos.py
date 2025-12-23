@@ -52,7 +52,7 @@ def get_todo_node_style(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     priority = get_todo_priority(metadata)
 
     style = {
-        "shape": "square",
+        "shape": "dot",
         "color": TODO_STATUS_COLORS.get(status, TODO_STATUS_COLORS["open"]),
     }
 

@@ -58,7 +58,7 @@ def get_issue_node_style(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     severity = get_issue_severity(metadata)
 
     style = {
-        "shape": "triangle",
+        "shape": "dot",
         "color": STATUS_COLORS.get(status, STATUS_COLORS["open"]),
     }
 
