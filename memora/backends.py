@@ -26,13 +26,153 @@ except ImportError:
 
 try:
     import boto3
-    from botocore.exceptions import ClientError, NoCredentialsError
+    from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
+    from botocore.config import Config as BotoConfig
 except ImportError:
     boto3 = None
     ClientError = None
     NoCredentialsError = None
+    EndpointConnectionError = None
+    BotoConfig = None
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds
+RETRY_MAX_DELAY = 30.0  # seconds
+
+# Transient error codes that should trigger retry
+TRANSIENT_ERROR_CODES = {
+    "500", "502", "503", "504",  # Server errors
+    "RequestTimeout", "RequestTimeoutException",
+    "ThrottlingException", "Throttling",
+    "SlowDown", "ServiceUnavailable",
+    "InternalError",
+}
+
+
+def _is_transient_error(error: Exception) -> bool:
+    """Check if an error is transient and should be retried."""
+    if EndpointConnectionError and isinstance(error, EndpointConnectionError):
+        return True
+    if ClientError and isinstance(error, ClientError):
+        error_code = error.response.get("Error", {}).get("Code", "")
+        return error_code in TRANSIENT_ERROR_CODES
+    # Also retry on connection errors
+    if isinstance(error, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return False
+
+
+def _get_user_friendly_error(error: Exception, operation: str) -> str:
+    """Convert S3/R2 errors to user-friendly messages with actionable advice."""
+    if NoCredentialsError and isinstance(error, NoCredentialsError):
+        return (
+            f"AWS/R2 credentials not found while {operation}.\n"
+            "Please configure credentials using one of:\n"
+            "  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY\n"
+            "  - AWS credentials file: ~/.aws/credentials\n"
+            "  - For Cloudflare R2: Set AWS_ENDPOINT_URL to your R2 endpoint"
+        )
+
+    if ClientError and isinstance(error, ClientError):
+        error_code = error.response.get("Error", {}).get("Code", "")
+        error_msg = error.response.get("Error", {}).get("Message", str(error))
+
+        if error_code == "AccessDenied" or error_code == "403":
+            return (
+                f"Access denied while {operation}.\n"
+                f"Error: {error_msg}\n"
+                "Please check:\n"
+                "  - Your API token has the correct permissions (read/write)\n"
+                "  - The bucket name is correct\n"
+                "  - For R2: Token needs 'Object Read & Write' permission"
+            )
+        elif error_code == "InvalidAccessKeyId":
+            return (
+                f"Invalid access key while {operation}.\n"
+                "Your AWS_ACCESS_KEY_ID appears to be incorrect.\n"
+                "Please verify your credentials are correct."
+            )
+        elif error_code == "SignatureDoesNotMatch":
+            return (
+                f"Signature mismatch while {operation}.\n"
+                "Your AWS_SECRET_ACCESS_KEY appears to be incorrect.\n"
+                "Please verify your credentials are correct."
+            )
+        elif error_code == "NoSuchBucket":
+            return (
+                f"Bucket not found while {operation}.\n"
+                f"Error: {error_msg}\n"
+                "Please check that the bucket exists and the name is correct."
+            )
+        elif error_code in TRANSIENT_ERROR_CODES:
+            return (
+                f"Temporary service error while {operation} (will retry).\n"
+                f"Error: {error_code} - {error_msg}"
+            )
+        else:
+            return f"S3/R2 error while {operation}: {error_code} - {error_msg}"
+
+    if EndpointConnectionError and isinstance(error, EndpointConnectionError):
+        return (
+            f"Cannot connect to cloud storage while {operation}.\n"
+            "Please check:\n"
+            "  - Your internet connection\n"
+            "  - The AWS_ENDPOINT_URL is correct (for R2/MinIO)\n"
+            f"Error: {error}"
+        )
+
+    return f"Error while {operation}: {error}"
+
+
+def _retry_with_backoff(func, operation: str, max_retries: int = MAX_RETRIES):
+    """Execute a function with exponential backoff retry for transient errors.
+
+    Args:
+        func: Callable to execute
+        operation: Description of operation for error messages
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        Result of func()
+
+    Raises:
+        Original exception if non-transient or retries exhausted
+    """
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            last_error = e
+
+            if not _is_transient_error(e):
+                # Non-transient error, don't retry
+                raise
+
+            if attempt == max_retries:
+                # Last attempt failed
+                logger.error(
+                    f"All {max_retries + 1} attempts failed for {operation}: {e}"
+                )
+                raise
+
+            # Calculate delay with exponential backoff + jitter
+            delay = min(
+                RETRY_BASE_DELAY * (2 ** attempt) + (time.time() % 1),
+                RETRY_MAX_DELAY
+            )
+            logger.warning(
+                f"Transient error during {operation} (attempt {attempt + 1}/{max_retries + 1}), "
+                f"retrying in {delay:.1f}s: {e}"
+            )
+            time.sleep(delay)
+
+    # Should not reach here, but just in case
+    raise last_error
 
 
 class ConflictError(Exception):
@@ -296,6 +436,31 @@ class CloudSQLiteBackend(StorageBackend):
 
         logger.info(f"Uploaded empty database to {self.bucket}/{self.key}")
 
+    def _create_local_database_only(self) -> None:
+        """Create an empty database locally without uploading to cloud.
+
+        This is used as a fallback when cloud upload fails, allowing
+        the user to continue working in local-only mode.
+        """
+        logger.info(f"Creating local-only database at {self.cache_path}")
+
+        # Create empty local database with schema
+        from .storage import ensure_schema
+
+        conn = sqlite3.connect(self.cache_path, check_same_thread=True)
+        conn.row_factory = sqlite3.Row
+        ensure_schema(conn)
+        conn.close()
+
+        # Mark as dirty so next sync attempt will try to upload
+        self._last_hash = self._compute_hash()
+        self._is_dirty = True
+
+        logger.warning(
+            "Running in local-only mode. Changes will not sync to cloud until "
+            "connectivity is restored. Run 'memora-server sync-push' to retry upload."
+        )
+
     def sync_before_use(self) -> None:
         """Download database from S3 if needed."""
         if not self.auto_sync:
@@ -305,9 +470,12 @@ class CloudSQLiteBackend(StorageBackend):
             try:
                 # Check if remote object exists and get metadata
                 try:
-                    head_response = self.s3_client.head_object(
-                        Bucket=self.bucket,
-                        Key=self.key
+                    head_response = _retry_with_backoff(
+                        lambda: self.s3_client.head_object(
+                            Bucket=self.bucket,
+                            Key=self.key
+                        ),
+                        "checking remote database"
                     )
                     remote_etag = head_response.get("ETag", "").strip('"')
                     remote_modified = head_response.get("LastModified")
@@ -321,7 +489,19 @@ class CloudSQLiteBackend(StorageBackend):
                             f"Remote database not found (error {error_code}), "
                             f"creating empty database"
                         )
-                        self._create_and_upload_empty_database()
+                        try:
+                            self._create_and_upload_empty_database()
+                        except Exception as upload_error:
+                            # Graceful fallback: use local-only mode if upload fails
+                            friendly_msg = _get_user_friendly_error(
+                                upload_error, "uploading initial database"
+                            )
+                            logger.warning(
+                                f"Failed to upload initial database, using local-only mode.\n"
+                                f"{friendly_msg}"
+                            )
+                            # Create local database without uploading
+                            self._create_local_database_only()
                         return
                     raise
 
@@ -335,13 +515,19 @@ class CloudSQLiteBackend(StorageBackend):
                     self._last_hash = self._compute_hash()
                     return
 
-                # Download from S3
+                # Download from S3 with retry
                 logger.info(f"Downloading {self.bucket}/{self.key} to {self.cache_path}")
                 start_time = time.time()
 
                 # Download to temporary file first
                 temp_path = self.cache_path.parent / f"{self.cache_path.name}.tmp"
-                self.s3_client.download_file(self.bucket, self.key, str(temp_path))
+
+                _retry_with_backoff(
+                    lambda: self.s3_client.download_file(
+                        self.bucket, self.key, str(temp_path)
+                    ),
+                    "downloading database"
+                )
 
                 # Move to final location
                 shutil.move(str(temp_path), str(self.cache_path))
@@ -360,11 +546,17 @@ class CloudSQLiteBackend(StorageBackend):
                 self._last_hash = self._compute_hash()
                 self._is_dirty = False
 
-            except NoCredentialsError:
-                logger.error("AWS credentials not found")
-                raise
+            except NoCredentialsError as e:
+                friendly_msg = _get_user_friendly_error(e, "syncing from cloud")
+                logger.error(friendly_msg)
+                raise RuntimeError(friendly_msg) from e
+            except ClientError as e:
+                friendly_msg = _get_user_friendly_error(e, "syncing from cloud")
+                logger.error(friendly_msg)
+                raise RuntimeError(friendly_msg) from e
             except Exception as e:
-                logger.error(f"Failed to sync from cloud: {e}")
+                friendly_msg = _get_user_friendly_error(e, "syncing from cloud")
+                logger.error(friendly_msg)
                 raise
 
     def sync_after_write(self) -> None:
@@ -404,9 +596,12 @@ class CloudSQLiteBackend(StorageBackend):
                 # Verify remote hasn't changed since our last sync
                 if last_known_etag:
                     try:
-                        current_remote = self.s3_client.head_object(
-                            Bucket=self.bucket,
-                            Key=self.key
+                        current_remote = _retry_with_backoff(
+                            lambda: self.s3_client.head_object(
+                                Bucket=self.bucket,
+                                Key=self.key
+                            ),
+                            "checking remote state before upload"
                         )
                         current_remote_etag = current_remote.get("ETag", "").strip('"')
 
@@ -425,7 +620,7 @@ class CloudSQLiteBackend(StorageBackend):
                         if e.response["Error"]["Code"] != "404":
                             raise
 
-                # Upload to S3
+                # Upload to S3 with retry
                 logger.info(f"Uploading {self.cache_path} to {self.bucket}/{self.key}")
                 start_time = time.time()
 
@@ -433,11 +628,14 @@ class CloudSQLiteBackend(StorageBackend):
                 if self.encrypt:
                     extra_args["ServerSideEncryption"] = "AES256"
 
-                self.s3_client.upload_file(
-                    str(self.cache_path),
-                    self.bucket,
-                    self.key,
-                    ExtraArgs=extra_args if extra_args else None
+                _retry_with_backoff(
+                    lambda: self.s3_client.upload_file(
+                        str(self.cache_path),
+                        self.bucket,
+                        self.key,
+                        ExtraArgs=extra_args if extra_args else None
+                    ),
+                    "uploading database"
                 )
 
                 duration = time.time() - start_time
@@ -445,9 +643,12 @@ class CloudSQLiteBackend(StorageBackend):
                 logger.info(f"Uploaded {size_mb:.2f} MB in {duration:.2f}s")
 
                 # Update metadata with new remote state
-                head_response = self.s3_client.head_object(
-                    Bucket=self.bucket,
-                    Key=self.key
+                head_response = _retry_with_backoff(
+                    lambda: self.s3_client.head_object(
+                        Bucket=self.bucket,
+                        Key=self.key
+                    ),
+                    "verifying upload"
                 )
                 metadata = {
                     "etag": head_response.get("ETag", "").strip('"'),
@@ -463,8 +664,20 @@ class CloudSQLiteBackend(StorageBackend):
             except ConflictError:
                 # Re-raise conflict errors without wrapping
                 raise
+            except NoCredentialsError as e:
+                friendly_msg = _get_user_friendly_error(e, "uploading to cloud")
+                logger.error(friendly_msg)
+                # Keep dirty flag set so next attempt will try again
+                raise RuntimeError(friendly_msg) from e
+            except ClientError as e:
+                friendly_msg = _get_user_friendly_error(e, "uploading to cloud")
+                logger.error(friendly_msg)
+                # Keep dirty flag set so next attempt will try again
+                raise RuntimeError(friendly_msg) from e
             except Exception as e:
-                logger.error(f"Failed to sync to cloud: {e}")
+                friendly_msg = _get_user_friendly_error(e, "uploading to cloud")
+                logger.error(friendly_msg)
+                # Keep dirty flag set so next attempt will try again
                 raise
 
     def connect(self, *, check_same_thread: bool = True) -> sqlite3.Connection:
