@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 def _is_port_in_use(host: str, port: int) -> bool:
     """Check if a port is already in use."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
             return False
@@ -172,7 +173,10 @@ def start_graph_server(host: str, port: int) -> None:
     def run_server():
         import uvicorn
 
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        # SO_REUSEADDR is set by default in uvicorn, but we ensure quick restart
+        server.run()
 
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
