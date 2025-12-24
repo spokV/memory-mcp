@@ -5,7 +5,7 @@
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
-https://github.com/agentic-mcp-tools/memora/raw/main/media/demo_1.mp4
+<img src="media/demo_1.gif" alt="Memora Demo" width="800">
 
 ## Features
 
