@@ -1017,16 +1017,24 @@ def _update_crossrefs_for_memory(
 
 
 def _update_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
+    # Skip cross-reference computation for section memories
+    record = get_memory(conn, memory_id)
+    if record and record.get("metadata", {}).get("type") == "section":
+        return
     related = _update_crossrefs_for_memory(conn, memory_id)
     for item in related:
         _update_crossrefs_for_memory(conn, item["id"])
 
 
 def rebuild_crossrefs(conn: sqlite3.Connection) -> int:
-    rows = conn.execute("SELECT id FROM memories").fetchall()
+    rows = conn.execute("SELECT id, metadata FROM memories").fetchall()
     total = 0
     for row in rows:
         memory_id = row["id"]
+        # Skip section memories - they don't need cross-references
+        metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        if metadata.get("type") == "section":
+            continue
         _update_crossrefs_for_memory(conn, memory_id)
         total += 1
     conn.commit()

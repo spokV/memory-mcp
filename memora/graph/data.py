@@ -31,16 +31,26 @@ from .templates import build_static_html
 DUPLICATE_THRESHOLD = 0.7
 
 
+def is_section(metadata: Optional[Dict]) -> bool:
+    """Check if a memory is a section header based on metadata."""
+    if not metadata:
+        return False
+    return metadata.get("type") == "section"
+
+
 def _find_duplicate_ids(conn, memories: List[Dict]) -> set:
     """Find memory IDs that have duplicates (similarity >= threshold).
 
     A memory is marked as duplicate if it has a cross-reference with
     score >= DUPLICATE_THRESHOLD to another memory in the current view.
+    Section memories are excluded from duplicate detection.
     """
-    memory_ids = {m["id"] for m in memories}
+    # Exclude section memories from duplicate detection
+    non_section_memories = [m for m in memories if not is_section(m.get("metadata"))]
+    memory_ids = {m["id"] for m in non_section_memories}
     duplicate_ids = set()
 
-    for m in memories:
+    for m in non_section_memories:
         for ref in get_crossrefs(conn, m["id"]):
             if ref.get("score", 0) >= DUPLICATE_THRESHOLD:
                 # Only mark if the related memory is also in our view
@@ -105,7 +115,10 @@ def _build_nodes(
     connection_counts: Optional[Dict[int, int]] = None,
     duplicate_ids: Optional[set] = None,
 ) -> List[Dict]:
-    """Build vis.js node objects from memories."""
+    """Build vis.js node objects from memories.
+
+    Section memories are excluded from the graph.
+    """
     import math
 
     if duplicate_ids is None:
@@ -113,6 +126,9 @@ def _build_nodes(
 
     nodes = []
     for m in memories:
+        # Skip section memories - they are not visible in the graph
+        if is_section(m.get("metadata")):
+            continue
         tags = m.get("tags", [])
         primary_tag = tags[0] if tags else "untagged"
         meta = m.get("metadata") or {}
@@ -162,9 +178,12 @@ def _build_nodes(
 
 
 def _build_tag_to_nodes(memories: List[Dict]) -> Dict[str, List[int]]:
-    """Build tag -> node IDs mapping."""
+    """Build tag -> node IDs mapping. Section memories are excluded."""
     tag_to_nodes: Dict[str, List[int]] = {}
     for m in memories:
+        # Skip section memories - they're not visible in graph
+        if is_section(m.get("metadata")):
+            continue
         for tag in m.get("tags", []):
             if tag not in tag_to_nodes:
                 tag_to_nodes[tag] = []
@@ -176,7 +195,7 @@ def _build_section_mappings(memories: List[Dict]) -> tuple:
     """Build section and subsection -> node IDs mappings.
 
     Returns (section_to_nodes, path_to_nodes) tuple.
-    Issues are excluded since they have their own dedicated legend.
+    Issues, TODOs, and section placeholders are excluded.
     """
     section_to_nodes: Dict[str, List[int]] = {}
     path_to_nodes: Dict[str, List[int]] = {}
@@ -184,8 +203,8 @@ def _build_section_mappings(memories: List[Dict]) -> tuple:
     for m in memories:
         meta = m.get("metadata") or {}
 
-        # Skip issues and TODOs - they have their own legends
-        if is_issue(meta) or is_todo(meta):
+        # Skip issues, TODOs, and section placeholders
+        if is_issue(meta) or is_todo(meta) or is_section(meta):
             continue
 
         hierarchy = meta.get("hierarchy", {})
