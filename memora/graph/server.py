@@ -1,5 +1,6 @@
 """HTTP server and routes for graph visualization."""
 
+import asyncio
 import os
 import socket
 import sys
@@ -8,9 +9,11 @@ from typing import TYPE_CHECKING
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
+from sse_starlette.sse import EventSourceResponse
 
 from .data import export_graph_html, get_graph_data, get_memory_for_api
 from .templates import get_spa_html
+from ..storage import connect
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -19,6 +22,7 @@ if TYPE_CHECKING:
 def _is_port_in_use(host: str, port: int) -> bool:
     """Check if a port is already in use."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
             return False
@@ -93,6 +97,37 @@ def start_graph_server(host: str, port: int) -> None:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def graph_events(request: Request):
+        """SSE endpoint for graph update notifications."""
+        async def event_generator():
+            last_count = None
+            last_updated = None
+            while True:
+                try:
+                    conn = connect()
+                    row = conn.execute(
+                        "SELECT COUNT(*) as cnt, MAX(created_at) as latest FROM memories"
+                    ).fetchone()
+                    conn.close()
+
+                    current_count = row["cnt"] if row else 0
+                    current_updated = row["latest"] if row else None
+
+                    # Detect changes
+                    if last_count is not None and (
+                        current_count != last_count or current_updated != last_updated
+                    ):
+                        yield {"event": "graph-updated", "data": "refresh"}
+
+                    last_count = current_count
+                    last_updated = current_updated
+                except Exception:
+                    pass
+
+                await asyncio.sleep(2)  # Check every 2 seconds
+
+        return EventSourceResponse(event_generator())
+
     async def r2_image_proxy(request: Request):
         """Proxy images from R2 storage."""
         try:
@@ -129,6 +164,7 @@ def start_graph_server(host: str, port: int) -> None:
         routes=[
             Route("/graph", graph_handler),
             Route("/api/graph", api_graph),
+            Route("/api/events", graph_events),
             Route("/api/memories/{id:int}", api_memory),
             Route("/r2/{path:path}", r2_image_proxy),
         ]
@@ -137,7 +173,10 @@ def start_graph_server(host: str, port: int) -> None:
     def run_server():
         import uvicorn
 
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        # SO_REUSEADDR is set by default in uvicorn, but we ensure quick restart
+        server.run()
 
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()

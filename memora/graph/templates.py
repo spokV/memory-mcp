@@ -288,12 +288,16 @@ document.addEventListener('mouseup', function() {
 
 # JavaScript for panel display
 PANEL_JS = """
+var currentPanelMemoryId = null;
+
 function closePanel() {
     document.getElementById('panel').classList.remove('active');
     document.getElementById('resize-handle').classList.remove('active');
+    currentPanelMemoryId = null;
 }
 
 function showPanel(mem) {
+    currentPanelMemoryId = mem.id;
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
     // Show issue or TODO badges if applicable
@@ -641,6 +645,143 @@ def get_spa_html() -> str:
 
         // Load graph on page load
         loadGraph();
+
+        // SSE for live updates
+        function rebuildLegends() {{
+            // Rebuild tag legend
+            var legendHtml = '';
+            var tagEntries = Object.entries(graphData.tagColors).slice(0, 12);
+            for (var [tag, color] of tagEntries) {{
+                legendHtml += '<div class="legend-item" data-tag="' + tag + '" onclick="filterByTag(\\'' + tag + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + tag + '</div>';
+            }}
+            document.getElementById('legend-items').innerHTML = legendHtml;
+
+            // Rebuild issues legend
+            var issuesHtml = '';
+            if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
+                issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
+                var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
+                for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
+                    var color = statusColors[status] || '#8b949e';
+                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    issuesHtml += '<div class="legend-item issue-status" data-status="' + status + '" onclick="filterByStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                }}
+                if (graphData.issueCategoryToNodes && Object.keys(graphData.issueCategoryToNodes).length > 0) {{
+                    issuesHtml += '<div class="issue-categories collapsed"><b>Components</b><span class="legend-toggle" onclick="toggleSection(this)">[+]</span><div class="section-items">';
+                    for (var component of Object.keys(graphData.issueCategoryToNodes).sort()) {{
+                        var count = graphData.issueCategoryToNodes[component].length;
+                        issuesHtml += '<div class="legend-item issue-category" data-issue-category="' + component + '" onclick="filterByIssueCategory(\\'' + component + '\\')"><span class="legend-color small" style="background:#8b949e"></span>' + component + ' (' + count + ')</div>';
+                    }}
+                    issuesHtml += '</div></div>';
+                }}
+                issuesHtml += '</div>';
+            }}
+            document.getElementById('issues-legend-items').innerHTML = issuesHtml;
+
+            // Rebuild TODOs legend
+            var todosHtml = '';
+            if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
+                todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
+                var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
+                for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
+                    var color = todoStatusColors[status] || '#8b949e';
+                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
+                }}
+                if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
+                    todosHtml += '<div class="todo-categories collapsed"><b>Categories</b><span class="legend-toggle" onclick="toggleSection(this)">[+]</span><div class="section-items">';
+                    for (var category of Object.keys(graphData.todoCategoryToNodes).sort()) {{
+                        var count = graphData.todoCategoryToNodes[category].length;
+                        todosHtml += '<div class="legend-item todo-category" data-todo-category="' + category + '" onclick="filterByTodoCategory(\\'' + category + '\\')"><span class="legend-color small" style="background:#8b949e"></span>' + category + ' (' + count + ')</div>';
+                    }}
+                    todosHtml += '</div></div>';
+                }}
+                todosHtml += '</div>';
+            }}
+            document.getElementById('todos-legend-items').innerHTML = todosHtml;
+
+            // Rebuild duplicates legend
+            var duplicatesHtml = '';
+            if (graphData.duplicateIds && graphData.duplicateIds.length > 0) {{
+                duplicatesHtml = '<div id="duplicates-legend"><div class="legend-item" onclick="filterByDuplicates()"><span class="legend-color" style="background:#a855f7;border:2px solid #f85149;"></span>Duplicates (' + graphData.duplicateIds.length + ')</div></div>';
+            }}
+            document.getElementById('duplicates-legend-items').innerHTML = duplicatesHtml;
+
+            // Rebuild sections
+            var sectionsHtml = '';
+            for (var [section, nodeIds] of Object.entries(graphData.sectionToNodes)) {{
+                sectionsHtml += '<div class="section-item" data-section="' + section + '" onclick="filterBySection(\\'' + section + '\\')">' + section + ' (' + nodeIds.length + ')</div>';
+                var sectionPaths = Object.keys(graphData.subsectionToNodes).filter(k => k.startsWith(section + '/')).sort();
+                var rendered = new Set();
+                for (var fullPath of sectionPaths) {{
+                    var subPath = fullPath.slice(section.length + 1);
+                    var parts = subPath.split('/');
+                    for (var i = 0; i < parts.length; i++) {{
+                        var partial = parts.slice(0, i + 1).join('/');
+                        var renderKey = section + '/' + partial;
+                        if (!rendered.has(renderKey)) {{
+                            rendered.add(renderKey);
+                            var indent = '&nbsp;&nbsp;'.repeat(i);
+                            var count = (graphData.subsectionToNodes[renderKey] || []).length;
+                            sectionsHtml += '<div class="subsection-item" data-subsection="' + renderKey + '" onclick="filterBySubsection(\\'' + renderKey + '\\')" style="padding-left:' + (8 + i*12) + 'px;">' + indent + '\\u2514 ' + parts[i] + ' (' + count + ')</div>';
+                        }}
+                    }}
+                }}
+            }}
+            document.getElementById('section-items').innerHTML = sectionsHtml;
+        }}
+
+        function connectSSE() {{
+            var eventSource = new EventSource('/api/events');
+            eventSource.addEventListener('graph-updated', async function(e) {{
+                console.log('Graph update detected, refreshing...');
+                try {{
+                    const response = await fetch('/api/graph');
+                    var newData = await response.json();
+                    if (newData.error) return;
+
+                    // Update graphData
+                    graphData = newData;
+
+                    // Process edges for duplicates
+                    var duplicateSet = new Set(graphData.duplicateIds || []);
+                    var processedEdges = graphData.edges.map(function(e) {{
+                        if (duplicateSet.has(e.from) && duplicateSet.has(e.to)) {{
+                            return Object.assign({{}}, e, {{ color: {{ color: '#f85149', opacity: 0.8 }} }});
+                        }}
+                        return e;
+                    }});
+                    graphData.edges = processedEdges;
+
+                    // Update vis.js datasets
+                    nodes.clear();
+                    nodes.add(graphData.nodes);
+                    edges.clear();
+                    edges.add(graphData.edges);
+
+                    // Rebuild all legends
+                    rebuildLegends();
+
+                    // Close panel if displayed memory was deleted
+                    if (currentPanelMemoryId !== null) {{
+                        var stillExists = graphData.nodes.some(function(n) {{ return n.id === currentPanelMemoryId; }});
+                        if (!stillExists) {{
+                            closePanel();
+                        }}
+                    }}
+
+                    // Clear memory cache for fresh data
+                    memoryCache = {{}};
+                }} catch (err) {{
+                    console.error('Error refreshing graph:', err);
+                }}
+            }});
+            eventSource.onerror = function() {{
+                eventSource.close();
+                setTimeout(connectSSE, 5000);  // Reconnect after 5s
+            }};
+        }}
+        connectSSE();
     </script>
 </body>
 </html>'''

@@ -134,6 +134,9 @@ def _build_nodes(
         meta = m.get("metadata") or {}
 
         content = m["content"]
+        # Get first line or first 60 chars for headline, strip markdown headers
+        first_line = content.split("\n")[0].lstrip("#").strip()[:60]
+        headline = first_line.replace('"', "'").replace("\\", "")
         label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
 
         # Calculate node size based on connections (like Connected Papers)
@@ -148,7 +151,7 @@ def _build_nodes(
         node = {
             "id": m["id"],
             "label": label + "..." if len(content) > 35 else label,
-            "title": f"Memory #{m['id']} ({connections} connections)",
+            "title": f"Memory #{m['id']}\n{headline}",
             "color": tag_colors[primary_tag],
             "size": node_size,
             "mass": node_mass,
