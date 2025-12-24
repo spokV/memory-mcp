@@ -610,6 +610,47 @@ async def memory_create_todo(
 
 
 @mcp.tool()
+async def memory_create_section(
+    content: str,
+    section: Optional[str] = None,
+    subsection: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new section/subsection header memory.
+
+    Section memories are organizational placeholders that:
+    - Are NOT visible in the graph visualization
+    - Are NOT included in duplicate detection
+    - Do NOT compute embeddings or cross-references
+
+    Args:
+        content: Title/description of the section
+        section: Parent section name (e.g., "Architecture", "API")
+        subsection: Subsection path (e.g., "endpoints/auth")
+
+    Returns:
+        Created section memory with auto-assigned tag "memora/sections"
+    """
+    # Build metadata
+    metadata: Dict[str, Any] = {
+        "type": "section",
+    }
+    if section:
+        metadata["section"] = section
+    if subsection:
+        metadata["subsection"] = subsection
+
+    # Create with auto-tag
+    tags = ["memora/sections"]
+
+    try:
+        record = _create_memory(content.strip(), metadata, tags)
+    except ValueError as exc:
+        return {"error": "invalid_input", "message": str(exc)}
+
+    return {"memory": record}
+
+
+@mcp.tool()
 async def memory_list(
     query: Optional[str] = None,
     metadata_filters: Optional[Dict[str, Any]] = None,
