@@ -288,12 +288,16 @@ document.addEventListener('mouseup', function() {
 
 # JavaScript for panel display
 PANEL_JS = """
+var currentPanelMemoryId = null;
+
 function closePanel() {
     document.getElementById('panel').classList.remove('active');
     document.getElementById('resize-handle').classList.remove('active');
+    currentPanelMemoryId = null;
 }
 
 function showPanel(mem) {
+    currentPanelMemoryId = mem.id;
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
     // Show issue or TODO badges if applicable
@@ -757,6 +761,14 @@ def get_spa_html() -> str:
 
                     // Rebuild all legends
                     rebuildLegends();
+
+                    // Close panel if displayed memory was deleted
+                    if (currentPanelMemoryId !== null) {{
+                        var stillExists = graphData.nodes.some(function(n) {{ return n.id === currentPanelMemoryId; }});
+                        if (!stillExists) {{
+                            closePanel();
+                        }}
+                    }}
 
                     // Clear memory cache for fresh data
                     memoryCache = {{}};
