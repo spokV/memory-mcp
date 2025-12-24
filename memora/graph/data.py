@@ -27,6 +27,29 @@ from .todos import (
 )
 from .templates import build_static_html
 
+# Similarity threshold for duplicate detection
+DUPLICATE_THRESHOLD = 0.7
+
+
+def _find_duplicate_ids(conn, memories: List[Dict]) -> set:
+    """Find memory IDs that have duplicates (similarity >= threshold).
+
+    A memory is marked as duplicate if it has a cross-reference with
+    score >= DUPLICATE_THRESHOLD to another memory in the current view.
+    """
+    memory_ids = {m["id"] for m in memories}
+    duplicate_ids = set()
+
+    for m in memories:
+        for ref in get_crossrefs(conn, m["id"]):
+            if ref.get("score", 0) >= DUPLICATE_THRESHOLD:
+                # Only mark if the related memory is also in our view
+                if ref["id"] in memory_ids:
+                    duplicate_ids.add(m["id"])
+                    duplicate_ids.add(ref["id"])
+
+    return duplicate_ids
+
 
 def _expand_r2_urls(metadata: Optional[Dict]) -> Dict:
     """Expand R2 URLs in metadata for display."""
@@ -80,9 +103,13 @@ def _build_nodes(
     memories: List[Dict],
     tag_colors: Dict[str, str],
     connection_counts: Optional[Dict[int, int]] = None,
+    duplicate_ids: Optional[set] = None,
 ) -> List[Dict]:
     """Build vis.js node objects from memories."""
     import math
+
+    if duplicate_ids is None:
+        duplicate_ids = set()
 
     nodes = []
     for m in memories:
@@ -120,6 +147,14 @@ def _build_nodes(
         todo_style = get_todo_node_style(meta)
         if todo_style:
             node.update(todo_style)
+
+        # Apply duplicate indicator - red border
+        if m["id"] in duplicate_ids:
+            node["color"] = {
+                "background": node.get("color", "#a855f7"),
+                "border": "#f85149",
+            }
+            node["borderWidth"] = 3
 
         nodes.append(node)
 
@@ -261,8 +296,11 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
         edges = _build_edges(conn, memories, min_score)
         connection_counts = _count_connections(edges)
 
+        # Find duplicates (similarity >= 0.7)
+        duplicate_ids = _find_duplicate_ids(conn, memories)
+
         tag_colors = _build_tag_colors(memories)
-        nodes = _build_nodes(memories, tag_colors, connection_counts)
+        nodes = _build_nodes(memories, tag_colors, connection_counts, duplicate_ids)
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
@@ -281,6 +319,7 @@ def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, 
             "issueCategoryToNodes": issue_category_to_nodes,
             "todoStatusToNodes": todo_status_to_nodes,
             "todoCategoryToNodes": todo_category_to_nodes,
+            "duplicateIds": list(duplicate_ids),
         }
 
     finally:
@@ -332,8 +371,11 @@ def export_graph_html(
         edges = _build_edges(conn, memories, min_score)
         connection_counts = _count_connections(edges)
 
+        # Find duplicates (similarity >= 0.7)
+        duplicate_ids = _find_duplicate_ids(conn, memories)
+
         tag_colors = _build_tag_colors(memories)
-        nodes = _build_nodes(memories, tag_colors, connection_counts)
+        nodes = _build_nodes(memories, tag_colors, connection_counts, duplicate_ids)
         tag_to_nodes = _build_tag_to_nodes(memories)
         section_to_nodes, path_to_nodes = _build_section_mappings(memories)
         status_to_nodes = build_status_to_nodes(memories)
@@ -374,6 +416,7 @@ def export_graph_html(
             sections_html=sections_html,
             issues_legend_html=issues_legend_html,
             todos_legend_html=todos_legend_html,
+            duplicate_ids_json=json.dumps(list(duplicate_ids)),
         )
 
         result = {
