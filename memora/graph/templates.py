@@ -63,6 +63,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .legend-toggle { cursor: pointer; color: #8b949e; font-size: 11px; margin-left: 4px; }
 .legend-toggle:hover { color: #c9d1d9; }
 #legend .reset:hover { text-decoration: underline; }
+#duplicates-legend {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #30363d;
+}
+#duplicates-legend .legend-color {
+    font-size: 10px;
+}
 #sections {
     position: absolute;
     bottom: 50px;
@@ -188,6 +196,15 @@ function toggleSection(el) {
     var parent = el.parentElement;
     parent.classList.toggle('collapsed');
     el.textContent = parent.classList.contains('collapsed') ? '[+]' : '[-]';
+}
+
+function filterByDuplicates() {
+    document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
+    var el = document.querySelector('#duplicates-legend .legend-item');
+    if (el) el.classList.add('active');
+    currentFilter = 'duplicates';
+    var nodeIds = typeof graphData !== 'undefined' ? graphData.duplicateIds : (typeof duplicateIds !== 'undefined' ? duplicateIds : []);
+    applyFilter(nodeIds);
 }
 
 function filterByTag(tag) {
@@ -326,10 +343,21 @@ def build_static_html(
     sections_html: str,
     issues_legend_html: str,
     todos_legend_html: str,
+    duplicate_ids_json: str = "[]",
 ) -> str:
     """Build complete static HTML for export."""
     css = get_full_css()
     js = get_full_js()
+
+    # Build duplicates legend HTML if there are duplicates
+    import json
+    duplicate_ids = json.loads(duplicate_ids_json)
+    duplicates_legend_html = ""
+    if duplicate_ids:
+        duplicates_legend_html = f'''<div id="duplicates-legend">
+<div class="legend-item" onclick="filterByDuplicates()">
+<span class="legend-color" style="background:#a855f7;border:2px solid #f85149;"></span>
+Duplicates ({len(duplicate_ids)})</div></div>'''
 
     return f'''<!DOCTYPE html>
 <html>
@@ -351,7 +379,7 @@ def build_static_html(
         <div class="tags" id="panel-tags"></div>
         <div class="content" id="panel-content"></div>
     </div>
-    <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
+    <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}{duplicates_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b>{sections_html}</div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom</div>
     <script>
@@ -363,10 +391,18 @@ def build_static_html(
         var issueCategoryToNodes = {issue_category_to_nodes_json};
         var todoStatusToNodes = {todo_status_to_nodes_json};
         var todoCategoryToNodes = {todo_category_to_nodes_json};
+        var duplicateIds = {duplicate_ids_json};
+        var duplicateSet = new Set(duplicateIds);
         var allNodes = {nodes_json};
-        var allEdges = {edges_json};
+        var allEdges = {edges_json}.map(function(e) {{
+            // Color edges between duplicates red
+            if (duplicateSet.has(e.from) && duplicateSet.has(e.to)) {{
+                return Object.assign({{}}, e, {{ color: {{ color: '#f85149', opacity: 0.8 }} }});
+            }}
+            return e;
+        }});
         var currentFilter = null;
-        var graphData = {{ statusToNodes: statusToNodes, issueCategoryToNodes: issueCategoryToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes }};
+        var graphData = {{ nodes: allNodes, edges: allEdges, statusToNodes: statusToNodes, issueCategoryToNodes: issueCategoryToNodes, todoStatusToNodes: todoStatusToNodes, todoCategoryToNodes: todoCategoryToNodes, duplicateIds: duplicateIds }};
 
         {js}
 
@@ -420,7 +456,7 @@ def get_spa_html() -> str:
         <div class="tags" id="panel-tags"></div>
         <div class="content" id="panel-content"></div>
     </div>
-    <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
+    <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div id="duplicates-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search</div>
@@ -505,6 +541,13 @@ def get_spa_html() -> str:
             }}
             document.getElementById('todos-legend-items').innerHTML = todosHtml;
 
+            // Build duplicates legend
+            var duplicatesHtml = '';
+            if (graphData.duplicateIds && graphData.duplicateIds.length > 0) {{
+                duplicatesHtml = '<div id="duplicates-legend"><div class="legend-item" onclick="filterByDuplicates()"><span class="legend-color" style="background:#a855f7;border:2px solid #f85149;"></span>Duplicates (' + graphData.duplicateIds.length + ')</div></div>';
+            }}
+            document.getElementById('duplicates-legend-items').innerHTML = duplicatesHtml;
+
             function toggleTags() {{
                 var items = document.getElementById('legend-items');
                 var toggle = document.querySelector('.legend-toggle');
@@ -543,7 +586,16 @@ def get_spa_html() -> str:
 
             // Init vis.js
             nodes = new vis.DataSet(graphData.nodes);
-            edges = new vis.DataSet(graphData.edges);
+            // Color edges between duplicates red
+            var duplicateSet = new Set(graphData.duplicateIds || []);
+            var processedEdges = graphData.edges.map(function(e) {{
+                if (duplicateSet.has(e.from) && duplicateSet.has(e.to)) {{
+                    return Object.assign({{}}, e, {{ color: {{ color: '#f85149', opacity: 0.8 }} }});
+                }}
+                return e;
+            }});
+            graphData.edges = processedEdges;  // Store processed edges back
+            edges = new vis.DataSet(processedEdges);
             var container = document.getElementById('graph');
             var data = {{ nodes: nodes, edges: edges }};
             var options = {{
