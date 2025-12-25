@@ -21,7 +21,7 @@ div.vis-tooltip {
     max-width: 320px;
     white-space: pre-wrap;
 }
-#panel { width: 400px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
+#panel { width: 450px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
 #panel.active { display: block; }
 #panel h2 { color: #58a6ff; margin-bottom: 10px; font-size: 16px; }
 #panel .tags { margin-bottom: 15px; }
@@ -291,7 +291,8 @@ function getConnectedNodes(nodeId, hops) {
 
 function focusOnNode(nodeId) {
     focusedNodeId = nodeId;
-    var connected = getConnectedNodes(nodeId, 2);
+    var hop1 = getConnectedNodes(nodeId, 1);  // Direct connections
+    var hop2 = getConnectedNodes(nodeId, 2);  // Includes hop1 + indirect
     var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
 
     // Only update currently visible nodes (respect filters)
@@ -304,24 +305,34 @@ function focusOnNode(nodeId) {
     }).map(function(n) {
         if (n.id === nodeId) {
             return { id: n.id, borderWidth: 4, color: { background: n.color.background || n.color, border: '#58a6ff' }, opacity: 1 };
-        } else if (connected.has(n.id)) {
-            // Reset previous focus styling and keep visible
+        } else if (hop1.has(n.id)) {
+            // Direct connections - full visibility
             return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 1 };
+        } else if (hop2.has(n.id)) {
+            // Indirect connections - mostly faded
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.35 };
         } else {
-            // Reset and fade out
-            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.15 };
+            // Unconnected (hop 3+) - nearly invisible
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.08 };
         }
     });
 
-    // Update edges with opacity - only visible ones
+    // Update edges with visual hierarchy - only visible ones
     var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
     var edgeUpdates = sourceEdges.filter(function(e) {
         return visibleEdgeIds.has(e.id);
     }).map(function(e) {
-        if (connected.has(e.from) && connected.has(e.to)) {
-            return { id: e.id, color: { color: '#58a6ff', opacity: 0.8 } };
-        } else {
-            return { id: e.id, color: { color: '#30363d', opacity: 0.1 } };
+        // Hop 1: edges directly connected to focused node - thick cyan
+        if (e.from === nodeId || e.to === nodeId) {
+            return { id: e.id, width: 4, color: '#4CC9F0' };
+        }
+        // Hop 2: edges between connected nodes - thin faded grey
+        else if (hop2.has(e.from) && hop2.has(e.to)) {
+            return { id: e.id, width: 1, color: 'rgba(139,148,158,0.35)' };
+        }
+        // Unconnected (hop 3+): nearly invisible
+        else {
+            return { id: e.id, width: 1, color: 'rgba(48,54,61,0.05)' };
         }
     });
 
@@ -348,7 +359,7 @@ function exitFocusMode() {
     var edgeUpdates = sourceEdges.filter(function(e) {
         return visibleEdgeIds.has(e.id);
     }).map(function(e) {
-        return { id: e.id, color: e.color || { color: '#30363d', opacity: 0.6 } };
+        return { id: e.id, width: 1, color: e.color || 'rgba(48,54,61,0.6)' };
     });
 
     nodes.update(nodeUpdates);
