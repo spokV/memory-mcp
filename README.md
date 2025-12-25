@@ -1,6 +1,11 @@
 <img src="media/memora.gif" width="60" align="left" alt="Memora Demo">
 
 # Memora
+
+[![Version](https://img.shields.io/badge/version-0.2.13-blue)](https://github.com/agentic-mcp-tools/memora/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/agentic-mcp-tools/memora?style=social)](https://github.com/agentic-mcp-tools/memora/stargazers)
+
 <br clear="left">
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
@@ -56,7 +61,7 @@ Add to `.mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "memory": {
+    "memora": {
       "command": "memora-server",
       "args": [],
       "env": {
@@ -73,7 +78,7 @@ Add to `.mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "memory": {
+    "memora": {
       "command": "memora-server",
       "args": [],
       "env": {
@@ -94,7 +99,7 @@ Add to `.mcp.json` in your project root:
 Add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.memory]
+[mcp_servers.memora]
   command = "memora-server"  # or full path: /path/to/bin/memora-server
   args = ["--no-graph"]
   env = {

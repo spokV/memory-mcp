@@ -8,7 +8,20 @@ BASE_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; }
 #graph { flex: 1; height: 100%; }
-#panel { width: 400px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
+div.vis-tooltip {
+    background: linear-gradient(135deg, #1f2937 0%, #161b22 100%);
+    color: #e6edf3;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
+    max-width: 320px;
+    white-space: pre-wrap;
+}
+#panel { width: 450px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
 #panel.active { display: block; }
 #panel h2 { color: #58a6ff; margin-bottom: 10px; font-size: 16px; }
 #panel .tags { margin-bottom: 15px; }
@@ -98,7 +111,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 # Additional CSS for dynamic (SPA) graph
 SPA_CSS = """
 #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 16px; }
-#search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
+#search-box { position: absolute; top: 10px; left: 220px; background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
 #search-box input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; width: 200px; }
 #search-box input:focus { outline: none; border-color: #58a6ff; }
 """
@@ -250,6 +263,7 @@ function applyFilter(nodeIds) {
 function resetFilter() {
     document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
     currentFilter = null;
+    exitFocusMode();
     var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
     var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
     nodes.clear();
@@ -257,6 +271,99 @@ function resetFilter() {
     nodes.add(sourceNodes);
     edges.add(sourceEdges);
     network.fit({ animation: true });
+}
+
+var focusedNodeId = null;
+
+function getConnectedNodes(nodeId, hops) {
+    var connected = new Set([nodeId]);
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    for (var h = 0; h < hops; h++) {
+        var toAdd = [];
+        sourceEdges.forEach(function(e) {
+            if (connected.has(e.from)) toAdd.push(e.to);
+            if (connected.has(e.to)) toAdd.push(e.from);
+        });
+        toAdd.forEach(function(id) { connected.add(id); });
+    }
+    return connected;
+}
+
+function focusOnNode(nodeId) {
+    focusedNodeId = nodeId;
+    var hop1 = getConnectedNodes(nodeId, 1);  // Direct connections
+    var hop2 = getConnectedNodes(nodeId, 2);  // Includes hop1 + indirect
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+
+    // Only update currently visible nodes (respect filters)
+    var visibleNodeIds = new Set(nodes.getIds());
+    var visibleEdgeIds = new Set(edges.getIds());
+
+    // Update nodes with opacity - use update() to preserve positions
+    var nodeUpdates = sourceNodes.filter(function(n) {
+        return visibleNodeIds.has(n.id);
+    }).map(function(n) {
+        if (n.id === nodeId) {
+            return { id: n.id, borderWidth: 4, color: { background: n.color.background || n.color, border: '#58a6ff' }, opacity: 1 };
+        } else if (hop1.has(n.id)) {
+            // Direct connections - full visibility
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 1 };
+        } else if (hop2.has(n.id)) {
+            // Indirect connections - mostly faded
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.35 };
+        } else {
+            // Unconnected (hop 3+) - nearly invisible
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.08 };
+        }
+    });
+
+    // Update edges with visual hierarchy - only visible ones
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    var edgeUpdates = sourceEdges.filter(function(e) {
+        return visibleEdgeIds.has(e.id);
+    }).map(function(e) {
+        // Hop 1: edges directly connected to focused node - thick cyan
+        if (e.from === nodeId || e.to === nodeId) {
+            return { id: e.id, width: 4, color: '#4CC9F0' };
+        }
+        // Hop 2: edges between connected nodes - thin faded grey
+        else if (hop2.has(e.from) && hop2.has(e.to)) {
+            return { id: e.id, width: 1, color: 'rgba(139,148,158,0.35)' };
+        }
+        // Unconnected (hop 3+): nearly invisible
+        else {
+            return { id: e.id, width: 1, color: 'rgba(48,54,61,0.05)' };
+        }
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
+
+function exitFocusMode() {
+    if (!focusedNodeId) return;
+    focusedNodeId = null;
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+
+    // Only update currently visible nodes (respect filters)
+    var visibleNodeIds = new Set(nodes.getIds());
+    var visibleEdgeIds = new Set(edges.getIds());
+
+    // Restore original node styles - use update() to preserve positions
+    var nodeUpdates = sourceNodes.filter(function(n) {
+        return visibleNodeIds.has(n.id);
+    }).map(function(n) {
+        return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 1 };
+    });
+    var edgeUpdates = sourceEdges.filter(function(e) {
+        return visibleEdgeIds.has(e.id);
+    }).map(function(e) {
+        return { id: e.id, width: 1, color: e.color || 'rgba(48,54,61,0.6)' };
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
 }
 """
 
@@ -613,7 +720,11 @@ def get_spa_html() -> str:
             network.on('click', async function(params) {{
                 if (params.nodes.length > 0) {{
                     var nodeId = params.nodes[0];
+                    focusOnNode(nodeId);
                     await showMemoryAsync(nodeId);
+                }} else {{
+                    // Clicked on background - exit focus mode
+                    exitFocusMode();
                 }}
             }});
         }}

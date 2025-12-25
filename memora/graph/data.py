@@ -28,7 +28,7 @@ from .todos import (
 from .templates import build_static_html
 
 # Similarity threshold for duplicate detection
-DUPLICATE_THRESHOLD = 0.7
+DUPLICATE_THRESHOLD = 0.85
 
 
 def is_section(metadata: Optional[Dict]) -> bool:
@@ -137,7 +137,7 @@ def _build_nodes(
         # Get first line or first 60 chars for headline, strip markdown headers
         first_line = content.split("\n")[0].lstrip("#").strip()[:60]
         headline = first_line.replace('"', "'").replace("\\", "")
-        label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
+        label = content[:35].replace("\n", " ").replace("#", "").replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "").strip().replace('"', "'").replace("\\", "")
 
         # Calculate node size based on connections (like Connected Papers)
         connections = connection_counts.get(m["id"], 0) if connection_counts else 0
@@ -151,7 +151,7 @@ def _build_nodes(
         node = {
             "id": m["id"],
             "label": label + "..." if len(content) > 35 else label,
-            "title": f"Memory #{m['id']}\n{headline}",
+            "title": f"#{m['id']}\n{headline}",
             "color": tag_colors[primary_tag],
             "size": node_size,
             "mass": node_mass,
@@ -240,12 +240,14 @@ def _build_edges(conn, memories: List[Dict], min_score: float) -> List[Dict]:
     """Build vis.js edge objects from crossrefs."""
     edges = []
     seen = set()
+    edge_id = 0
     for m in memories:
         for ref in get_crossrefs(conn, m["id"]):
             edge_key = tuple(sorted([m["id"], ref["id"]]))
             if edge_key not in seen and ref.get("score", 0) > min_score:
                 seen.add(edge_key)
-                edges.append({"from": m["id"], "to": ref["id"]})
+                edges.append({"id": edge_id, "from": m["id"], "to": ref["id"]})
+                edge_id += 1
     return edges
 
 
@@ -295,7 +297,7 @@ def _build_sections_html(
     return sections_html
 
 
-def get_graph_data(min_score: float = 0.25, rebuild: bool = False) -> Dict[str, Any]:
+def get_graph_data(min_score: float = 0.40, rebuild: bool = False) -> Dict[str, Any]:
     """Get graph nodes, edges, and metadata for API response.
 
     Args:
@@ -370,7 +372,7 @@ def get_memory_for_api(memory_id: int) -> Dict[str, Any]:
 
 
 def export_graph_html(
-    output_path: Optional[str] = None, min_score: float = 0.25
+    output_path: Optional[str] = None, min_score: float = 0.40
 ) -> Dict[str, Any]:
     """Generate static HTML knowledge graph visualization.
 
