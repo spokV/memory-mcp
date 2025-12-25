@@ -137,7 +137,7 @@ def _build_nodes(
         # Get first line or first 60 chars for headline, strip markdown headers
         first_line = content.split("\n")[0].lstrip("#").strip()[:60]
         headline = first_line.replace('"', "'").replace("\\", "")
-        label = content[:35].replace("\n", " ").replace('"', "'").replace("\\", "")
+        label = content[:35].replace("\n", " ").replace("#", "").replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "").strip().replace('"', "'").replace("\\", "")
 
         # Calculate node size based on connections (like Connected Papers)
         connections = connection_counts.get(m["id"], 0) if connection_counts else 0
@@ -151,7 +151,7 @@ def _build_nodes(
         node = {
             "id": m["id"],
             "label": label + "..." if len(content) > 35 else label,
-            "title": f"Memory #{m['id']}\n{headline}",
+            "title": f"#{m['id']}\n{headline}",
             "color": tag_colors[primary_tag],
             "size": node_size,
             "mass": node_mass,

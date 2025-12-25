@@ -8,6 +8,19 @@ BASE_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; }
 #graph { flex: 1; height: 100%; }
+div.vis-tooltip {
+    background: linear-gradient(135deg, #1f2937 0%, #161b22 100%);
+    color: #e6edf3;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
+    max-width: 320px;
+    white-space: pre-wrap;
+}
 #panel { width: 400px; background: #161b22; border-left: 1px solid #30363d; padding: 20px; overflow-y: auto; display: none; position: relative; }
 #panel.active { display: block; }
 #panel h2 { color: #58a6ff; margin-bottom: 10px; font-size: 16px; }
@@ -98,7 +111,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 # Additional CSS for dynamic (SPA) graph
 SPA_CSS = """
 #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 16px; }
-#search-box { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
+#search-box { position: absolute; top: 10px; left: 220px; background: rgba(22,27,34,0.9); padding: 8px; border-radius: 6px; }
 #search-box input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; width: 200px; }
 #search-box input:focus { outline: none; border-color: #58a6ff; }
 """
