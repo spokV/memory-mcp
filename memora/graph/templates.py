@@ -263,6 +263,7 @@ function applyFilter(nodeIds) {
 function resetFilter() {
     document.querySelectorAll('.legend-item, .section-item, .subsection-item').forEach(el => el.classList.remove('active'));
     currentFilter = null;
+    exitFocusMode();
     var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
     var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
     nodes.clear();
@@ -270,6 +271,88 @@ function resetFilter() {
     nodes.add(sourceNodes);
     edges.add(sourceEdges);
     network.fit({ animation: true });
+}
+
+var focusedNodeId = null;
+
+function getConnectedNodes(nodeId, hops) {
+    var connected = new Set([nodeId]);
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    for (var h = 0; h < hops; h++) {
+        var toAdd = [];
+        sourceEdges.forEach(function(e) {
+            if (connected.has(e.from)) toAdd.push(e.to);
+            if (connected.has(e.to)) toAdd.push(e.from);
+        });
+        toAdd.forEach(function(id) { connected.add(id); });
+    }
+    return connected;
+}
+
+function focusOnNode(nodeId) {
+    focusedNodeId = nodeId;
+    var connected = getConnectedNodes(nodeId, 2);
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+
+    // Only update currently visible nodes (respect filters)
+    var visibleNodeIds = new Set(nodes.getIds());
+    var visibleEdgeIds = new Set(edges.getIds());
+
+    // Update nodes with opacity - use update() to preserve positions
+    var nodeUpdates = sourceNodes.filter(function(n) {
+        return visibleNodeIds.has(n.id);
+    }).map(function(n) {
+        if (n.id === nodeId) {
+            return { id: n.id, borderWidth: 4, color: { background: n.color.background || n.color, border: '#58a6ff' }, opacity: 1 };
+        } else if (connected.has(n.id)) {
+            // Reset previous focus styling and keep visible
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 1 };
+        } else {
+            // Reset and fade out
+            return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 0.15 };
+        }
+    });
+
+    // Update edges with opacity - only visible ones
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    var edgeUpdates = sourceEdges.filter(function(e) {
+        return visibleEdgeIds.has(e.id);
+    }).map(function(e) {
+        if (connected.has(e.from) && connected.has(e.to)) {
+            return { id: e.id, color: { color: '#58a6ff', opacity: 0.8 } };
+        } else {
+            return { id: e.id, color: { color: '#30363d', opacity: 0.1 } };
+        }
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
+
+function exitFocusMode() {
+    if (!focusedNodeId) return;
+    focusedNodeId = null;
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+
+    // Only update currently visible nodes (respect filters)
+    var visibleNodeIds = new Set(nodes.getIds());
+    var visibleEdgeIds = new Set(edges.getIds());
+
+    // Restore original node styles - use update() to preserve positions
+    var nodeUpdates = sourceNodes.filter(function(n) {
+        return visibleNodeIds.has(n.id);
+    }).map(function(n) {
+        return { id: n.id, borderWidth: n.borderWidth || 2, color: n.color, opacity: 1 };
+    });
+    var edgeUpdates = sourceEdges.filter(function(e) {
+        return visibleEdgeIds.has(e.id);
+    }).map(function(e) {
+        return { id: e.id, color: e.color || { color: '#30363d', opacity: 0.6 } };
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
 }
 """
 
@@ -626,7 +709,11 @@ def get_spa_html() -> str:
             network.on('click', async function(params) {{
                 if (params.nodes.length > 0) {{
                     var nodeId = params.nodes[0];
+                    focusOnNode(nodeId);
                     await showMemoryAsync(nodeId);
+                }} else {{
+                    // Clicked on background - exit focus mode
+                    exitFocusMode();
                 }}
             }});
         }}
