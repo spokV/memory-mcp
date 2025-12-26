@@ -10,7 +10,7 @@
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
-<img src="media/demo_1.gif" alt="Memora Demo" width="800">
+<img src="media/demo.gif" alt="Memora Demo" width="800">
 
 ## Features
 
