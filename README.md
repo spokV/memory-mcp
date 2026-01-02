@@ -2,7 +2,7 @@
 
 # Memora
 
-[![Version](https://img.shields.io/badge/version-0.2.13-blue)](https://github.com/agentic-mcp-tools/memora/releases)
+[![Version](https://img.shields.io/github/v/tag/agentic-mcp-tools/memora?label=version&color=blue)](https://github.com/agentic-mcp-tools/memora/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/agentic-mcp-tools/memora?style=social)](https://github.com/agentic-mcp-tools/memora/stargazers)
 
