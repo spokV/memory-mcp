@@ -194,7 +194,7 @@ ISSUE_BADGE_CSS = """
     background: rgba(88, 166, 255, 0.05);
     border-radius: 0 6px 6px 0;
 }
-#issues-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
+#issues-legend b { display: block; margin-bottom: 8px; color: #8b949e; cursor: pointer; font-size: 11px; }
 #issues-legend b:hover { text-decoration: underline; }
 #issues-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
 .legend-item.issue-category .legend-color {
@@ -205,6 +205,8 @@ ISSUE_BADGE_CSS = """
 .issue-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; display: inline !important; }
 .issue-categories .legend-toggle { margin-left: 4px; }
 .issue-categories.collapsed .section-items { display: none; }
+.legend-item.issue-status { font-size: 11px; color: #8b949e; }
+.legend-item.issue-status.selected { color: #ffffff; }
 .legend-item.issue-category { font-size: 11px; padding-left: 8px; }
 """
 
