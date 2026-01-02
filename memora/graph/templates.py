@@ -69,6 +69,7 @@ div.vis-tooltip {
 .legend-item { margin: 4px 0; display: flex; align-items: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .legend-item:hover { background: rgba(255,255,255,0.1); }
 .legend-item.active { background: rgba(88,166,255,0.3); }
+.legend-item.selected { color: #ffffff; }
 .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
 #legend .reset { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; color: #58a6ff; cursor: pointer; }
 #legend-items { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
@@ -102,10 +103,15 @@ div.vis-tooltip {
 .section-item { margin: 4px 0; cursor: pointer; padding: 3px 6px; border-radius: 4px; color: #a855f7; }
 .section-item:hover { background: rgba(255,255,255,0.1); }
 .section-item.active { background: rgba(168,85,247,0.3); }
+.section-item.selected { color: #ffffff; }
 .subsection-item { margin: 2px 0 2px 8px; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }
 .subsection-item:hover { background: rgba(255,255,255,0.1); }
 .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
+.subsection-item.selected { color: #ffffff; }
 #help { position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }
+#node-tooltip { position: absolute; display: none; background: rgba(22,27,34,0.95); border: 1px solid #30363d; padding: 8px 12px; border-radius: 6px; pointer-events: none; z-index: 1000; max-width: 300px; }
+#node-tooltip .tooltip-id { color: #58a6ff; font-size: 12px; font-weight: bold; }
+#node-tooltip .tooltip-desc { color: #8b949e; font-size: 10px; margin-top: 4px; }
 """
 
 # Additional CSS for dynamic (SPA) graph
@@ -393,6 +399,27 @@ document.addEventListener('mouseup', function() {
 });
 """
 
+# JavaScript for custom tooltip
+TOOLTIP_JS = """
+function showNodeTooltip(nodeId, pointer) {
+    var node = nodes.get(nodeId);
+    if (!node || !node.title) return;
+    var parts = node.title.split('\\n');
+    var idLine = parts[0] || '';
+    var descLine = parts.slice(1).join(' ') || '';
+    var tooltip = document.getElementById('node-tooltip');
+    tooltip.innerHTML = '<div class="tooltip-id">' + idLine + '</div>' +
+                        (descLine ? '<div class="tooltip-desc">' + descLine + '</div>' : '');
+    tooltip.style.left = (pointer.DOM.x + 15) + 'px';
+    tooltip.style.top = (pointer.DOM.y + 15) + 'px';
+    tooltip.style.display = 'block';
+}
+
+function hideNodeTooltip() {
+    document.getElementById('node-tooltip').style.display = 'none';
+}
+"""
+
 # JavaScript for panel display
 PANEL_JS = """
 var currentPanelMemoryId = null;
@@ -401,6 +428,7 @@ function closePanel() {
     document.getElementById('panel').classList.remove('active');
     document.getElementById('resize-handle').classList.remove('active');
     currentPanelMemoryId = null;
+    document.querySelectorAll('.subsection-item.selected, .section-item.selected').forEach(el => el.classList.remove('selected'));
 }
 
 function showPanel(mem) {
@@ -420,6 +448,42 @@ function showPanel(mem) {
     document.getElementById('panel-content').innerHTML += renderImages(mem.metadata);
     document.getElementById('panel').classList.add('active');
     document.getElementById('resize-handle').classList.add('active');
+
+    // Highlight the memory's subsection/status in the left pane
+    document.querySelectorAll('.subsection-item.selected, .section-item.selected, .legend-item.selected').forEach(el => el.classList.remove('selected'));
+    if (mem.metadata) {
+        // Handle issues
+        if (mem.metadata.type === 'issue' && mem.metadata.status) {
+            var issueEl = document.querySelector('.legend-item.issue-status[data-status="' + mem.metadata.status + '"]');
+            if (issueEl) issueEl.classList.add('selected');
+        }
+        // Handle TODOs
+        else if (mem.metadata.type === 'todo' && mem.metadata.status) {
+            var todoEl = document.querySelector('.legend-item.todo-status[data-todo-status="' + mem.metadata.status + '"]');
+            if (todoEl) todoEl.classList.add('selected');
+        }
+        // Handle regular memories with sections
+        else {
+            var section, subsection;
+            var hierarchy = mem.metadata.hierarchy;
+            if (hierarchy && hierarchy.path && hierarchy.path.length >= 1) {
+                section = hierarchy.path[0];
+                subsection = hierarchy.path.slice(1).join('/');
+            } else {
+                section = mem.metadata.section;
+                subsection = mem.metadata.subsection;
+            }
+            if (section) {
+                var sectionEl = document.querySelector('.section-item[data-section="' + section + '"]');
+                if (sectionEl) sectionEl.classList.add('selected');
+                if (subsection) {
+                    var path = section + '/' + subsection;
+                    var el = document.querySelector('.subsection-item[data-subsection="' + path + '"]');
+                    if (el) el.classList.add('selected');
+                }
+            }
+        }
+    }
 }
 """
 
@@ -436,7 +500,7 @@ def get_spa_css() -> str:
 
 def get_full_js() -> str:
     """Get complete JavaScript for graph functionality."""
-    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, PANEL_JS, RESIZE_JS])
+    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, TOOLTIP_JS, PANEL_JS, RESIZE_JS])
 
 
 def build_static_html(
@@ -493,6 +557,7 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
     <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}{duplicates_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b>{sections_html}</div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom</div>
+    <div id="node-tooltip"></div>
     <script>
         var memoriesData = {memories_json};
         var tagToNodes = {tag_to_nodes_json};
@@ -526,16 +591,25 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
             nodes: {{ shape: "dot", size: 16, font: {{ color: "#c9d1d9", size: 11 }}, borderWidth: 2 }},
             edges: {{ color: {{ color: "#30363d", opacity: 0.6 }}, smooth: {{ type: "continuous" }} }},
             physics: {{ barnesHut: {{ gravitationalConstant: -2000, springLength: 95, springConstant: 0.04, damping: 0.3, avoidOverlap: 0.3 }} }},
-            interaction: {{ hover: true, tooltipDelay: 100 }}
+            interaction: {{ hover: true, tooltipDelay: 99999 }}
         }};
         var network = new vis.Network(container, data, options);
 
         network.on("click", function(params) {{
+            hideNodeTooltip();
             if (params.nodes.length > 0) {{
                 var nodeId = params.nodes[0];
                 var mem = memoriesData[nodeId];
                 if (mem) showPanel(mem);
             }}
+        }});
+
+        network.on("hoverNode", function(params) {{
+            showNodeTooltip(params.node, params.pointer);
+        }});
+
+        network.on("blurNode", function() {{
+            hideNodeTooltip();
         }});
     </script>
 </body>
@@ -571,6 +645,7 @@ def get_spa_html() -> str:
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search</div>
+    <div id="node-tooltip"></div>
     <script>
         var graphData = null;
         var nodes, edges, network;
@@ -713,11 +788,12 @@ def get_spa_html() -> str:
                 nodes: {{ shape: 'dot', size: 16, font: {{ color: '#c9d1d9', size: 11 }}, borderWidth: 2 }},
                 edges: {{ color: {{ color: '#30363d', opacity: 0.6 }}, smooth: {{ type: 'continuous' }} }},
                 physics: {{ barnesHut: {{ gravitationalConstant: -2000, springLength: 95, springConstant: 0.04, damping: 0.3, avoidOverlap: 0.3 }} }},
-                interaction: {{ hover: true, tooltipDelay: 100 }}
+                interaction: {{ hover: true, tooltipDelay: 99999 }}
             }};
             network = new vis.Network(container, data, options);
 
             network.on('click', async function(params) {{
+                hideNodeTooltip();
                 if (params.nodes.length > 0) {{
                     var nodeId = params.nodes[0];
                     focusOnNode(nodeId);
@@ -726,6 +802,14 @@ def get_spa_html() -> str:
                     // Clicked on background - exit focus mode
                     exitFocusMode();
                 }}
+            }});
+
+            network.on('hoverNode', function(params) {{
+                showNodeTooltip(params.node, params.pointer);
+            }});
+
+            network.on('blurNode', function() {{
+                hideNodeTooltip();
             }});
         }}
 

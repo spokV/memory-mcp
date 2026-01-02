@@ -163,7 +163,7 @@ TODO_BADGE_CSS = """
     background: rgba(88, 166, 255, 0.05);
     border-radius: 0 6px 6px 0;
 }
-#todos-legend b { display: block; margin-bottom: 8px; color: #58a6ff; cursor: pointer; }
+#todos-legend b { display: block; margin-bottom: 8px; color: #8b949e; cursor: pointer; font-size: 11px; }
 #todos-legend b:hover { text-decoration: underline; }
 #todos-legend b.active { background: rgba(88,166,255,0.2); padding: 2px 6px; border-radius: 4px; margin: -2px -6px 6px -6px; }
 .legend-item.todo-category .legend-color {
@@ -174,6 +174,8 @@ TODO_BADGE_CSS = """
 .todo-categories b { font-size: 11px; color: #8b949e; margin-bottom: 4px; display: inline !important; }
 .todo-categories .legend-toggle { margin-left: 4px; }
 .todo-categories.collapsed .section-items { display: none; }
+.legend-item.todo-status { font-size: 11px; color: #8b949e; }
+.legend-item.todo-status.selected { color: #ffffff; }
 .legend-item.todo-category { font-size: 11px; padding-left: 8px; }
 """
 
