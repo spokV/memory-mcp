@@ -350,6 +350,64 @@ def _extract_hierarchy_path(metadata: Optional[Any]) -> List[str]:
     return path
 
 
+def _suggest_hierarchy_from_similar(
+    similar_memories: List[Dict[str, Any]],
+    max_suggestions: int = 3,
+) -> List[Dict[str, Any]]:
+    """Suggest hierarchy placement based on where similar memories are organized.
+
+    Args:
+        similar_memories: List of similar memory results with scores
+        max_suggestions: Maximum number of hierarchy suggestions
+
+    Returns:
+        List of hierarchy suggestions with paths, scores, and example memory IDs
+    """
+    # Count hierarchy paths from similar memories, weighted by similarity score
+    path_scores: Dict[tuple, float] = {}
+    path_examples: Dict[tuple, List[int]] = {}
+
+    for item in similar_memories:
+        if not item:
+            continue
+        memory_id = item.get("id")
+        score = item.get("score", 0)
+
+        # Get full memory to extract hierarchy
+        full_memory = _get_memory(memory_id)
+        if not full_memory:
+            continue
+
+        path = _extract_hierarchy_path(full_memory.get("metadata"))
+        if not path:
+            continue
+
+        path_tuple = tuple(path)
+        path_scores[path_tuple] = path_scores.get(path_tuple, 0) + score
+        if path_tuple not in path_examples:
+            path_examples[path_tuple] = []
+        path_examples[path_tuple].append(memory_id)
+
+    if not path_scores:
+        return []
+
+    # Sort by weighted score
+    sorted_paths = sorted(path_scores.items(), key=lambda x: x[1], reverse=True)
+
+    suggestions = []
+    for path_tuple, total_score in sorted_paths[:max_suggestions]:
+        path_list = list(path_tuple)
+        suggestions.append({
+            "path": path_list,
+            "section": path_list[0] if path_list else None,
+            "subsection": "/".join(path_list[1:]) if len(path_list) > 1 else None,
+            "confidence": round(total_score / len(similar_memories), 2),
+            "similar_memory_ids": path_examples[path_tuple][:3],
+        })
+
+    return suggestions
+
+
 def _compact_memory(memory: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Return a compact representation of a memory (id, preview, tags)."""
     if memory is None:
@@ -467,7 +525,7 @@ async def memory_create(
     metadata: Optional[Dict[str, Any]] = None,
     tags: Optional[list[str]] = None,
     suggest_similar: bool = True,
-    similarity_threshold: float = 0.4,
+    similarity_threshold: float = 0.2,
 ) -> Dict[str, Any]:
     """Create a new memory entry.
 
@@ -476,7 +534,7 @@ async def memory_create(
         metadata: Optional metadata dictionary
         tags: Optional list of tags
         suggest_similar: If True, find similar memories and suggest consolidation (default: True)
-        similarity_threshold: Minimum similarity score for suggestions (default: 0.4)
+        similarity_threshold: Minimum similarity score for suggestions (default: 0.2)
     """
     # Check hierarchy path BEFORE creating to detect new paths
     new_path = _extract_hierarchy_path(metadata)
@@ -510,27 +568,25 @@ async def memory_create(
             result["existing_similar_paths"] = similar
             result["hint"] = "Did you mean to use one of these existing paths? Use memory_update to change if needed."
 
-    # Search for similar memories and suggest consolidation
-    if suggest_similar and record and record.get("id"):
-        try:
-            similar_memories = _find_similar_for_consolidation(
-                record["id"], redacted_content, similarity_threshold
+    # Use cross-refs (related memories) for consolidation hints and duplicate detection
+    # Cross-refs use full embedding context (content + metadata + tags) so are more accurate
+    related_memories = record.get("related", []) if record else []
+    if suggest_similar and related_memories:
+        # Filter by threshold
+        above_threshold = [m for m in related_memories if m and m.get("score", 0) >= similarity_threshold]
+        if above_threshold:
+            result["similar_memories"] = above_threshold
+            result["consolidation_hint"] = (
+                f"Found {len(above_threshold)} similar memories. "
+                "Consider: (1) merge content with memory_update, or (2) delete redundant ones with memory_delete."
             )
-            if similar_memories:
-                result["similar_memories"] = similar_memories
-                result["consolidation_hint"] = (
-                    f"Found {len(similar_memories)} similar memories. "
-                    "Consider: (1) merge content with memory_update, or (2) delete redundant ones with memory_delete."
+            # Check for potential duplicates (>0.85 similarity)
+            duplicates = [m for m in above_threshold if m.get("score", 0) >= DUPLICATE_THRESHOLD]
+            if duplicates:
+                warnings["duplicate_warning"] = (
+                    f"Very similar memory exists (>={int(DUPLICATE_THRESHOLD*100)}% match). "
+                    f"Memory #{duplicates[0]['id']} has {int(duplicates[0]['score']*100)}% similarity."
                 )
-                # Check for potential duplicates (>0.85 similarity)
-                duplicates = [m for m in similar_memories if m and m.get("score", 0) >= DUPLICATE_THRESHOLD]
-                if duplicates:
-                    warnings["duplicate_warning"] = (
-                        f"Very similar memory exists (>={int(DUPLICATE_THRESHOLD*100)}% match). "
-                        f"Memory #{duplicates[0]['id']} has {int(duplicates[0]['score']*100)}% similarity."
-                    )
-        except Exception:
-            pass  # Don't fail on similarity search errors
 
     # Add warnings to result if any
     if warnings:
@@ -550,58 +606,23 @@ async def memory_create(
         if new_suggestions:
             suggestions["tags"] = new_suggestions
 
+        # Suggest hierarchy placement based on related memories (cross-refs)
+        # (only if user didn't provide a hierarchy path)
+        if not new_path and related_memories:
+            hierarchy_suggestions = _suggest_hierarchy_from_similar(related_memories)
+            if hierarchy_suggestions:
+                suggestions["hierarchy"] = hierarchy_suggestions
+                suggestions["hierarchy_hint"] = (
+                    "Similar memories are organized under these paths. "
+                    "Use memory_update to add section/subsection metadata."
+                )
+
         if suggestions:
             result["suggestions"] = suggestions
     except Exception:
         pass  # Don't fail on type inference errors
 
     return result
-
-
-def _find_similar_for_consolidation(
-    new_memory_id: int,
-    content: str,
-    min_score: float = 0.4,
-    max_results: int = 5,
-) -> List[Dict[str, Any]]:
-    """Find memories similar to the newly created one for potential consolidation.
-
-    Returns a list of similar memories with similarity scores and previews.
-    Excludes the newly created memory itself.
-    """
-    try:
-        results = _semantic_search(
-            content,
-            metadata_filters=None,
-            top_k=max_results + 1,  # +1 to account for the new memory itself
-            min_score=min_score,
-        )
-    except Exception:
-        return []
-
-    # Filter out the newly created memory and format results
-    similar = []
-    for item in results:
-        if item is None:
-            continue
-        memory = item.get("memory") or {}
-        if not memory or memory.get("id") == new_memory_id:
-            continue
-
-        mem_content = memory.get("content", "")
-        preview = mem_content[:120] + "..." if len(mem_content) > 120 else mem_content
-
-        similar.append({
-            "id": memory.get("id"),
-            "score": round(item.get("score", 0), 3),
-            "preview": preview,
-            "tags": memory.get("tags", []),
-        })
-
-        if len(similar) >= max_results:
-            break
-
-    return similar
 
 
 @mcp.tool()
@@ -1167,6 +1188,161 @@ async def memory_clusters(
     return {
         "count": len(clusters),
         "clusters": clusters,
+    }
+
+
+@mcp.tool()
+async def memory_find_duplicates(
+    min_similarity: float = 0.7,
+    max_similarity: float = 0.95,
+    limit: int = 10,
+    use_llm: bool = True,
+) -> Dict[str, Any]:
+    """Find potential duplicate memory pairs with optional LLM-powered comparison.
+
+    Scans cross-references to find memory pairs with similarity scores in the
+    specified range, then optionally uses LLM to semantically compare them.
+
+    Args:
+        min_similarity: Minimum similarity score to consider (default: 0.7)
+        max_similarity: Maximum similarity score to consider (default: 0.95)
+        limit: Maximum pairs to analyze (default: 10)
+        use_llm: Whether to use LLM for semantic comparison (default: True)
+
+    Returns:
+        Dictionary with:
+        - pairs: List of potential duplicate pairs with analysis
+        - total_candidates: Total pairs found in range
+        - analyzed: Number of pairs analyzed with LLM
+        - llm_available: Whether LLM comparison was available
+    """
+    from .storage import find_duplicate_candidates, compare_memories_llm, connect
+
+    with connect() as conn:
+        candidates = find_duplicate_candidates(conn, min_similarity, max_similarity, limit * 2)
+
+    total_candidates = len(candidates)
+    pairs = []
+    llm_available = False
+
+    for candidate in candidates[:limit]:
+        mem_a = _get_memory(candidate["memory_a_id"])
+        mem_b = _get_memory(candidate["memory_b_id"])
+
+        if not mem_a or not mem_b:
+            continue
+
+        pair_result = {
+            "memory_a": {
+                "id": mem_a["id"],
+                "preview": mem_a["content"][:150] + "..." if len(mem_a["content"]) > 150 else mem_a["content"],
+                "tags": mem_a.get("tags", []),
+            },
+            "memory_b": {
+                "id": mem_b["id"],
+                "preview": mem_b["content"][:150] + "..." if len(mem_b["content"]) > 150 else mem_b["content"],
+                "tags": mem_b.get("tags", []),
+            },
+            "similarity_score": round(candidate["similarity_score"], 3),
+        }
+
+        # Run LLM comparison if enabled
+        if use_llm:
+            llm_result = compare_memories_llm(
+                mem_a["content"],
+                mem_b["content"],
+                mem_a.get("metadata"),
+                mem_b.get("metadata"),
+            )
+            if llm_result:
+                llm_available = True
+                pair_result["llm_verdict"] = llm_result.get("verdict", "review")
+                pair_result["llm_confidence"] = llm_result.get("confidence", 0)
+                pair_result["llm_reasoning"] = llm_result.get("reasoning", "")
+                pair_result["suggested_action"] = llm_result.get("suggested_action", "review")
+                if llm_result.get("merge_suggestion"):
+                    pair_result["merge_suggestion"] = llm_result["merge_suggestion"]
+
+        pairs.append(pair_result)
+
+    return {
+        "pairs": pairs,
+        "total_candidates": total_candidates,
+        "analyzed": len(pairs),
+        "llm_available": llm_available,
+    }
+
+
+@mcp.tool()
+async def memory_merge(
+    source_id: int,
+    target_id: int,
+    merge_strategy: str = "append",
+) -> Dict[str, Any]:
+    """Merge source memory into target, then delete source.
+
+    Combines two memories into one, preserving content and metadata.
+
+    Args:
+        source_id: Memory ID to merge from (will be deleted)
+        target_id: Memory ID to merge into (will be updated)
+        merge_strategy: How to combine content:
+            - "append": Append source content to target (default)
+            - "prepend": Prepend source content to target
+            - "replace": Replace target content with source
+
+    Returns:
+        Updated target memory and deletion confirmation
+    """
+    from .storage import connect, update_memory, delete_memory
+
+    source = _get_memory(source_id)
+    target = _get_memory(target_id)
+
+    if not source:
+        return {"error": "not_found", "message": f"Source memory #{source_id} not found"}
+    if not target:
+        return {"error": "not_found", "message": f"Target memory #{target_id} not found"}
+
+    # Combine content based on strategy
+    if merge_strategy == "prepend":
+        new_content = source["content"] + "\n\n---\n\n" + target["content"]
+    elif merge_strategy == "replace":
+        new_content = source["content"]
+    else:  # append (default)
+        new_content = target["content"] + "\n\n---\n\n" + source["content"]
+
+    # Merge metadata (target takes precedence, but add source-specific fields)
+    merged_metadata = dict(source.get("metadata") or {})
+    merged_metadata.update(target.get("metadata") or {})
+    merged_metadata["merged_from"] = source_id
+
+    # Union tags
+    source_tags = set(source.get("tags") or [])
+    target_tags = set(target.get("tags") or [])
+    merged_tags = list(source_tags | target_tags)
+
+    # Update target memory
+    with connect() as conn:
+        updated = update_memory(
+            conn,
+            target_id,
+            content=new_content,
+            metadata=merged_metadata,
+            tags=merged_tags,
+        )
+        conn.commit()
+
+        # Delete source memory
+        delete_memory(conn, source_id)
+        conn.commit()
+
+    return {
+        "merged": True,
+        "target_id": target_id,
+        "source_id": source_id,
+        "updated_memory": updated,
+        "message": f"Memory #{source_id} merged into #{target_id} and deleted",
     }
 
 

@@ -141,23 +141,46 @@ mermaid.initialize({
     }
 });
 
+// Set up marked.js with custom renderer for mermaid
+marked.use({
+    renderer: {
+        link: function(token) {
+            return '<a href="' + token.href + '" target="_blank">' + token.text + '</a>';
+        },
+        code: function(code, infostring, escaped) {
+            var language = (infostring || '').trim().split(' ')[0];
+            if (language === 'mermaid') {
+                return '<div class="mermaid-pending">' + code + '</div>';
+            }
+            var esc = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            var langClass = language ? ' class="language-' + language + '"' : '';
+            return '<pre><code' + langClass + '>' + esc + '</code></pre>';
+        }
+    }
+});
+
 function renderMarkdown(text) {
-    var renderer = new marked.Renderer();
-    renderer.link = function(href, title, text) {
-        return '<a href="' + href + '" target="_blank">' + text + '</a>';
-    };
-    return marked.parse(text, { renderer: renderer });
+    return marked.parse(text);
 }
 
 async function renderMermaidBlocks() {
-    var blocks = document.querySelectorAll('#panel-content pre code.language-mermaid');
+    var blocks = document.querySelectorAll('#panel-content .mermaid-pending');
+    if (blocks.length === 0) return;
+
     for (var block of blocks) {
-        var container = document.createElement('div');
-        container.className = 'mermaid';
-        container.textContent = block.textContent;
-        block.parentElement.replaceWith(container);
+        block.className = 'mermaid';
+        block.removeAttribute('data-processed');
     }
-    if (blocks.length > 0) await mermaid.run();
+
+    // Wait for DOM to update before rendering
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    try {
+        var mermaidNodes = document.querySelectorAll('#panel-content .mermaid:not([data-processed])');
+        await mermaid.run({ nodes: Array.from(mermaidNodes) });
+    } catch (e) {
+        console.error('Mermaid render error:', e);
+    }
 }
 
 function renderImages(metadata) {
