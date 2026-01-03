@@ -41,6 +41,7 @@ else:
 EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
 
 # LLM configuration for deduplication comparison
+LLM_ENABLED = os.getenv("MEMORA_LLM_ENABLED", "true").lower() in ("true", "1", "yes")
 LLM_MODEL = os.getenv("MEMORA_LLM_MODEL", "gpt-4o-mini")
 
 # Event notification configuration
@@ -900,6 +901,9 @@ def _compute_embedding(
 
 def _get_llm_client():
     """Get or create cached LLM client for comparison."""
+    if not LLM_ENABLED:
+        return None
+
     try:
         import openai
 
