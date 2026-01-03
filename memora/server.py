@@ -1192,6 +1192,161 @@ async def memory_clusters(
 
 
 @mcp.tool()
+async def memory_find_duplicates(
+    min_similarity: float = 0.7,
+    max_similarity: float = 0.95,
+    limit: int = 10,
+    use_llm: bool = True,
+) -> Dict[str, Any]:
+    """Find potential duplicate memory pairs with optional LLM-powered comparison.
+
+    Scans cross-references to find memory pairs with similarity scores in the
+    specified range, then optionally uses LLM to semantically compare them.
+
+    Args:
+        min_similarity: Minimum similarity score to consider (default: 0.7)
+        max_similarity: Maximum similarity score to consider (default: 0.95)
+        limit: Maximum pairs to analyze (default: 10)
+        use_llm: Whether to use LLM for semantic comparison (default: True)
+
+    Returns:
+        Dictionary with:
+        - pairs: List of potential duplicate pairs with analysis
+        - total_candidates: Total pairs found in range
+        - analyzed: Number of pairs analyzed with LLM
+        - llm_available: Whether LLM comparison was available
+    """
+    from .storage import find_duplicate_candidates, compare_memories_llm, connect
+
+    with connect() as conn:
+        candidates = find_duplicate_candidates(conn, min_similarity, max_similarity, limit * 2)
+
+    total_candidates = len(candidates)
+    pairs = []
+    llm_available = False
+
+    for candidate in candidates[:limit]:
+        mem_a = _get_memory(candidate["memory_a_id"])
+        mem_b = _get_memory(candidate["memory_b_id"])
+
+        if not mem_a or not mem_b:
+            continue
+
+        pair_result = {
+            "memory_a": {
+                "id": mem_a["id"],
+                "preview": mem_a["content"][:150] + "..." if len(mem_a["content"]) > 150 else mem_a["content"],
+                "tags": mem_a.get("tags", []),
+            },
+            "memory_b": {
+                "id": mem_b["id"],
+                "preview": mem_b["content"][:150] + "..." if len(mem_b["content"]) > 150 else mem_b["content"],
+                "tags": mem_b.get("tags", []),
+            },
+            "similarity_score": round(candidate["similarity_score"], 3),
+        }
+
+        # Run LLM comparison if enabled
+        if use_llm:
+            llm_result = compare_memories_llm(
+                mem_a["content"],
+                mem_b["content"],
+                mem_a.get("metadata"),
+                mem_b.get("metadata"),
+            )
+            if llm_result:
+                llm_available = True
+                pair_result["llm_verdict"] = llm_result.get("verdict", "review")
+                pair_result["llm_confidence"] = llm_result.get("confidence", 0)
+                pair_result["llm_reasoning"] = llm_result.get("reasoning", "")
+                pair_result["suggested_action"] = llm_result.get("suggested_action", "review")
+                if llm_result.get("merge_suggestion"):
+                    pair_result["merge_suggestion"] = llm_result["merge_suggestion"]
+
+        pairs.append(pair_result)
+
+    return {
+        "pairs": pairs,
+        "total_candidates": total_candidates,
+        "analyzed": len(pairs),
+        "llm_available": llm_available,
+    }
+
+
+@mcp.tool()
+async def memory_merge(
+    source_id: int,
+    target_id: int,
+    merge_strategy: str = "append",
+) -> Dict[str, Any]:
+    """Merge source memory into target, then delete source.
+
+    Combines two memories into one, preserving content and metadata.
+
+    Args:
+        source_id: Memory ID to merge from (will be deleted)
+        target_id: Memory ID to merge into (will be updated)
+        merge_strategy: How to combine content:
+            - "append": Append source content to target (default)
+            - "prepend": Prepend source content to target
+            - "replace": Replace target content with source
+
+    Returns:
+        Updated target memory and deletion confirmation
+    """
+    from .storage import connect, update_memory, delete_memory
+
+    source = _get_memory(source_id)
+    target = _get_memory(target_id)
+
+    if not source:
+        return {"error": "not_found", "message": f"Source memory #{source_id} not found"}
+    if not target:
+        return {"error": "not_found", "message": f"Target memory #{target_id} not found"}
+
+    # Combine content based on strategy
+    if merge_strategy == "prepend":
+        new_content = source["content"] + "\n\n---\n\n" + target["content"]
+    elif merge_strategy == "replace":
+        new_content = source["content"]
+    else:  # append (default)
+        new_content = target["content"] + "\n\n---\n\n" + source["content"]
+
+    # Merge metadata (target takes precedence, but add source-specific fields)
+    merged_metadata = dict(source.get("metadata") or {})
+    merged_metadata.update(target.get("metadata") or {})
+    merged_metadata["merged_from"] = source_id
+
+    # Union tags
+    source_tags = set(source.get("tags") or [])
+    target_tags = set(target.get("tags") or [])
+    merged_tags = list(source_tags | target_tags)
+
+    # Update target memory
+    with connect() as conn:
+        updated = update_memory(
+            conn,
+            target_id,
+            content=new_content,
+            metadata=merged_metadata,
+            tags=merged_tags,
+        )
+        conn.commit()
+
+        # Delete source memory
+        delete_memory(conn, source_id)
+        conn.commit()
+
+    return {
+        "merged": True,
+        "target_id": target_id,
+        "source_id": source_id,
+        "updated_memory": updated,
+        "message": f"Memory #{source_id} merged into #{target_id} and deleted",
+    }
+
+
+@mcp.tool()
 async def memory_export() -> Dict[str, Any]:
     """Export all memories to JSON format for backup or transfer."""
 

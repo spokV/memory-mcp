@@ -40,6 +40,9 @@ else:
 # Embedding backend configuration
 EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
 
+# LLM configuration for deduplication comparison
+LLM_MODEL = os.getenv("MEMORA_LLM_MODEL", "gpt-4o-mini")
+
 # Event notification configuration
 EVENT_TRIGGER_TAG = "shared-cache"
 
@@ -889,6 +892,172 @@ def _compute_embedding(
         return _compute_embedding_openai(text)
     else:  # Default to tfidf
         return _compute_embedding_tfidf(text)
+
+
+# ---------------------------------------------------------------------------
+# LLM-based memory comparison for deduplication
+# ---------------------------------------------------------------------------
+
+def _get_llm_client():
+    """Get or create cached LLM client for comparison."""
+    try:
+        import openai
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+
+        if "llm_client" not in _embedding_model_cache:
+            base_url = os.getenv("OPENAI_BASE_URL")
+            client_kwargs = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            _embedding_model_cache["llm_client"] = openai.OpenAI(**client_kwargs)
+
+        return _embedding_model_cache["llm_client"]
+
+    except ImportError:
+        return None
+
+
+def compare_memories_llm(
+    content_a: str,
+    content_b: str,
+    metadata_a: Optional[Dict[str, Any]] = None,
+    metadata_b: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Use LLM to semantically compare two memories for deduplication.
+
+    Returns dict with:
+        - verdict: "duplicate" | "similar" | "different"
+        - confidence: 0.0-1.0
+        - reasoning: Brief explanation
+        - suggested_action: "merge" | "keep_both" | "review"
+        - merge_suggestion: How to combine if merging
+
+    Returns None if LLM is not available.
+    """
+    client = _get_llm_client()
+    if not client:
+        return None
+
+    try:
+        # Build comparison prompt
+        prompt = f"""Compare these two memory entries and determine if they are duplicates.
+
+Memory A:
+{content_a}
+{f'Metadata: {json.dumps(metadata_a)}' if metadata_a else ''}
+
+Memory B:
+{content_b}
+{f'Metadata: {json.dumps(metadata_b)}' if metadata_b else ''}
+
+Analyze whether these memories contain the same information (duplicates), related but distinct information (similar), or unrelated information (different).
+
+Respond with JSON only (no markdown):
+{{
+  "verdict": "duplicate" | "similar" | "different",
+  "confidence": 0.0-1.0,
+  "reasoning": "Brief explanation (1-2 sentences)",
+  "suggested_action": "merge" | "keep_both" | "review",
+  "merge_suggestion": "If verdict is duplicate, how to combine the content"
+}}"""
+
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that compares text entries for semantic similarity. Always respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=300,
+        )
+
+        result_text = response.choices[0].message.content.strip()
+        # Parse JSON response
+        result = json.loads(result_text)
+
+        # Validate required fields
+        if "verdict" not in result:
+            result["verdict"] = "review"
+        if "confidence" not in result:
+            result["confidence"] = 0.5
+        if "reasoning" not in result:
+            result["reasoning"] = "No reasoning provided"
+        if "suggested_action" not in result:
+            result["suggested_action"] = "review"
+
+        return result
+
+    except json.JSONDecodeError:
+        # LLM didn't return valid JSON
+        return {
+            "verdict": "review",
+            "confidence": 0.0,
+            "reasoning": "LLM response was not valid JSON",
+            "suggested_action": "review",
+        }
+    except Exception as e:
+        # API error, rate limit, etc.
+        return {
+            "verdict": "review",
+            "confidence": 0.0,
+            "reasoning": f"LLM error: {str(e)[:100]}",
+            "suggested_action": "review",
+        }
+
+
+def find_duplicate_candidates(
+    conn: "sqlite3.Connection",
+    min_similarity: float = 0.7,
+    max_similarity: float = 0.95,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Find memory pairs in similarity range that might be duplicates.
+
+    Returns list of pairs with their similarity scores.
+    """
+    # Get all cross-refs from database
+    cursor = conn.execute(
+        "SELECT memory_id, related FROM memories_crossrefs WHERE related IS NOT NULL"
+    )
+
+    pairs_seen = set()
+    candidates = []
+
+    for row in cursor:
+        memory_id = row[0]
+        try:
+            related = json.loads(row[1]) if row[1] else []
+        except json.JSONDecodeError:
+            continue
+
+        for rel in related:
+            if not rel:
+                continue
+            related_id = rel.get("id")
+            score = rel.get("score", 0)
+
+            if related_id is None:
+                continue
+
+            # Check if in similarity range
+            if min_similarity <= score <= max_similarity:
+                # Avoid duplicate pairs (A,B) and (B,A)
+                pair_key = tuple(sorted([memory_id, related_id]))
+                if pair_key not in pairs_seen:
+                    pairs_seen.add(pair_key)
+                    candidates.append({
+                        "memory_a_id": pair_key[0],
+                        "memory_b_id": pair_key[1],
+                        "similarity_score": score,
+                    })
+
+    # Sort by similarity (highest first)
+    candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
+
+    return candidates[:limit]
 
 
 def _embedding_to_json(vector: Dict[str, float]) -> Optional[str]:
