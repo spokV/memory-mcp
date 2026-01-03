@@ -16,12 +16,15 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 
 - **Persistent Storage** - SQLite-backed database with optional cloud sync (S3, GCS, Azure)
 - **Semantic Search** - Vector embeddings (TF-IDF, sentence-transformers, or OpenAI)
+- **LLM Deduplication** - Find and merge duplicate memories with AI-powered comparison
+- **Memory Automation** - Structured tools for TODOs, issues, and section placeholders
+- **Memory Linking** - Typed edges, importance boosting, and cluster detection
 - **Event Notifications** - Poll-based system for inter-agent communication
 - **Advanced Queries** - Full-text search, date ranges, tag filters (AND/OR/NOT)
 - **Cross-references** - Auto-linked related memories based on similarity
 - **Hierarchical Organization** - Explore memories by section/subsection
 - **Export/Import** - Backup and restore with merge strategies
-- **Knowledge Graph** - Interactive HTML visualization with filtering
+- **Knowledge Graph** - Interactive HTML visualization with Mermaid diagram rendering
 - **Live Graph Server** - Auto-starts HTTP server for remote access via SSH
 - **Statistics & Analytics** - Tag usage, trends, and connection insights
 - **Zero Dependencies** - Works out-of-box with Python stdlib (optional backends available)
@@ -126,8 +129,11 @@ Add to `~/.codex/config.toml`:
 | `MEMORA_GRAPH_PORT`    | Port for the knowledge graph visualization server (default: `8765`)        |
 | `MEMORA_EMBEDDING_MODEL` | Embedding backend: `tfidf` (default), `sentence-transformers`, or `openai` |
 | `SENTENCE_TRANSFORMERS_MODEL` | Model for sentence-transformers (default: `all-MiniLM-L6-v2`)        |
-| `OPENAI_API_KEY`       | API key for OpenAI embeddings (required when using `openai` backend)       |
-| `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model (default: `text-embedding-3-small`)                |
+| `OPENAI_API_KEY`       | API key for OpenAI embeddings and LLM deduplication                        |
+| `OPENAI_BASE_URL`      | Base URL for OpenAI-compatible APIs (OpenRouter, Azure, etc.)              |
+| `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model (default: `text-embedding-3-small`)               |
+| `MEMORA_LLM_ENABLED`   | Enable LLM-powered deduplication comparison (`true`/`false`, default: `true`) |
+| `MEMORA_LLM_MODEL`     | Model for deduplication comparison (default: `gpt-4o-mini`)                |
 | `AWS_PROFILE`          | AWS credentials profile from `~/.aws/credentials` (useful for R2)          |
 | `AWS_ENDPOINT_URL`     | S3-compatible endpoint for R2/MinIO                                        |
 | `R2_PUBLIC_DOMAIN`     | Public domain for R2 image URLs                                            |
@@ -223,3 +229,58 @@ ssh -L 8765:localhost:8765 user@remote
 Use different ports on different machines to avoid conflicts when forwarding multiple servers.
 
 To disable: add `"--no-graph"` to args in your MCP config.
+
+## LLM Deduplication
+
+Find and merge duplicate memories using AI-powered semantic comparison:
+
+```python
+# Find potential duplicates (uses cross-refs + optional LLM analysis)
+memory_find_duplicates(min_similarity=0.7, max_similarity=0.95, limit=10, use_llm=True)
+
+# Merge duplicates (append, prepend, or replace strategies)
+memory_merge(source_id=123, target_id=456, merge_strategy="append")
+```
+
+**LLM Comparison** analyzes memory pairs and returns:
+- `verdict`: "duplicate", "similar", or "different"
+- `confidence`: 0.0-1.0 score
+- `reasoning`: Brief explanation
+- `suggested_action`: "merge", "keep_both", or "review"
+
+Works with any OpenAI-compatible API (OpenAI, OpenRouter, Azure, etc.) via `OPENAI_BASE_URL`.
+
+## Memory Automation Tools
+
+Structured tools for common memory types:
+
+```python
+# Create a TODO with status and priority
+memory_create_todo(content="Implement feature X", status="open", priority="high", category="backend")
+
+# Create an issue with severity
+memory_create_issue(content="Bug in login flow", status="open", severity="major", component="auth")
+
+# Create a section placeholder (hidden from graph)
+memory_create_section(content="Architecture", section="docs", subsection="api")
+```
+
+## Memory Linking
+
+Manage relationships between memories:
+
+```python
+# Create typed edges between memories
+memory_link(from_id=1, to_id=2, edge_type="implements", bidirectional=True)
+
+# Edge types: references, implements, supersedes, extends, contradicts, related_to
+
+# Remove links
+memory_unlink(from_id=1, to_id=2)
+
+# Boost memory importance for ranking
+memory_boost(memory_id=42, boost_amount=0.5)
+
+# Detect clusters of related memories
+memory_clusters(min_cluster_size=2, min_score=0.3)
+```
