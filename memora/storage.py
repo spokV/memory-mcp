@@ -43,6 +43,67 @@ EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "tfidf")  # tfidf, sentenc
 # Event notification configuration
 EVENT_TRIGGER_TAG = "shared-cache"
 
+# Content validation limits
+MIN_CONTENT_LENGTH = 3
+MAX_CONTENT_LENGTH = 50000  # ~50KB text
+
+# Secret/PII detection patterns (warn only, don't block)
+SECRET_PATTERNS: List[tuple[str, str]] = [
+    (r'sk-(?:proj-)?[a-zA-Z0-9]{20,}', 'OpenAI API key'),
+    (r'sk-or-[a-zA-Z0-9-]{20,}', 'OpenRouter API key'),
+    (r'sk-ant-[a-zA-Z0-9-]{20,}', 'Anthropic API key'),
+    (r'AKIA[0-9A-Z]{16}', 'AWS Access Key'),
+    (r'-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', 'Private key'),
+    (r'Bearer [a-zA-Z0-9_-]{20,}', 'Bearer token'),
+    (r'ghp_[a-zA-Z0-9]{36}', 'GitHub PAT'),
+    (r'gho_[a-zA-Z0-9]{36}', 'GitHub OAuth token'),
+    (r'github_pat_[a-zA-Z0-9_]{22,}', 'GitHub fine-grained PAT'),
+    (r'xox[baprs]-[a-zA-Z0-9-]{10,}', 'Slack token'),
+    (r'(?i)password\s*[:=]\s*[^\s]{4,}', 'Password in plaintext'),
+    (r'(?i)secret\s*[:=]\s*[^\s]{4,}', 'Secret in plaintext'),
+    (r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', 'Credit card number'),
+]
+
+
+def _detect_secrets(content: str) -> List[str]:
+    """Detect potential secrets/PII in content. Returns list of warnings."""
+    warnings = []
+    for pattern, description in SECRET_PATTERNS:
+        if re.search(pattern, content):
+            warnings.append(description)
+    return warnings
+
+
+def _redact_secrets(content: str) -> tuple[str, List[str]]:
+    """Redact secrets/PII from content. Returns (redacted_content, list of redacted types)."""
+    redacted = []
+    result = content
+    for pattern, description in SECRET_PATTERNS:
+        if re.search(pattern, result):
+            result = re.sub(pattern, '[REDACTED]', result)
+            redacted.append(description)
+    return result, redacted
+
+
+def _validate_content(content: str) -> str:
+    """Validate and normalize content. Raises ValueError if invalid."""
+    if not isinstance(content, str):
+        content = str(content)
+
+    # Trim whitespace
+    content = content.strip()
+
+    # Normalize excessive newlines (max 2 consecutive)
+    content = re.sub(r'\n{3,}', '\n\n', content)
+
+    # Length validation
+    if len(content) < MIN_CONTENT_LENGTH:
+        raise ValueError(f"Content too short (min {MIN_CONTENT_LENGTH} characters)")
+    if len(content) > MAX_CONTENT_LENGTH:
+        raise ValueError(f"Content too long (max {MAX_CONTENT_LENGTH} characters)")
+
+    return content
+
 
 def _emit_event(conn: sqlite3.Connection, memory_id: int, tags: List[str]) -> None:
     """Emit an event notification if memory has the trigger tag."""
@@ -1009,17 +1070,194 @@ def _update_crossrefs_for_memory(
     )
 
     related = [
-        {"id": item["memory"]["id"], "score": item["score"]}
+        {"id": item["memory"]["id"], "score": item["score"], "edge_type": "related_to"}
         for item in results
     ]
     _store_crossrefs(conn, memory_id, related)
     return related
 
 
+# Valid edge types for explicit links
+EDGE_TYPES = {"related_to", "supersedes", "contradicts", "implements", "extends", "references"}
+
+
+def add_link(
+    conn: sqlite3.Connection,
+    from_id: int,
+    to_id: int,
+    edge_type: str = "references",
+    bidirectional: bool = True,
+) -> Dict[str, Any]:
+    """Add an explicit link between two memories.
+
+    Args:
+        from_id: Source memory ID
+        to_id: Target memory ID
+        edge_type: Type of relationship (references, implements, supersedes, contradicts, extends)
+        bidirectional: If True, also create reverse link
+
+    Returns:
+        Dict with status and created links
+    """
+    if edge_type not in EDGE_TYPES:
+        raise ValueError(f"Invalid edge_type '{edge_type}'. Must be one of: {', '.join(sorted(EDGE_TYPES))}")
+
+    # Verify both memories exist
+    from_mem = get_memory(conn, from_id)
+    to_mem = get_memory(conn, to_id)
+    if not from_mem:
+        raise ValueError(f"Memory {from_id} not found")
+    if not to_mem:
+        raise ValueError(f"Memory {to_id} not found")
+
+    links_created = []
+
+    # Add link from -> to
+    existing = get_crossrefs(conn, from_id)
+    # Remove any existing link to the same target
+    existing = [r for r in existing if r.get("id") != to_id]
+    # Add new link
+    existing.append({"id": to_id, "score": 1.0, "edge_type": edge_type})
+    _store_crossrefs(conn, from_id, existing)
+    links_created.append({"from": from_id, "to": to_id, "edge_type": edge_type})
+
+    # Add reverse link if bidirectional
+    if bidirectional:
+        reverse_type = _get_reverse_edge_type(edge_type)
+        existing_reverse = get_crossrefs(conn, to_id)
+        existing_reverse = [r for r in existing_reverse if r.get("id") != from_id]
+        existing_reverse.append({"id": from_id, "score": 1.0, "edge_type": reverse_type})
+        _store_crossrefs(conn, to_id, existing_reverse)
+        links_created.append({"from": to_id, "to": from_id, "edge_type": reverse_type})
+
+    return {"status": "linked", "links": links_created}
+
+
+def _get_reverse_edge_type(edge_type: str) -> str:
+    """Get the reverse edge type for bidirectional links."""
+    reverse_map = {
+        "references": "referenced_by",
+        "implements": "implemented_by",
+        "supersedes": "superseded_by",
+        "extends": "extended_by",
+        "contradicts": "contradicts",  # symmetric
+        "related_to": "related_to",    # symmetric
+    }
+    return reverse_map.get(edge_type, "related_to")
+
+
+def remove_link(
+    conn: sqlite3.Connection,
+    from_id: int,
+    to_id: int,
+    bidirectional: bool = True,
+) -> Dict[str, Any]:
+    """Remove a link between two memories."""
+    removed = []
+
+    existing = get_crossrefs(conn, from_id)
+    new_refs = [r for r in existing if r.get("id") != to_id]
+    if len(new_refs) < len(existing):
+        _store_crossrefs(conn, from_id, new_refs)
+        removed.append({"from": from_id, "to": to_id})
+
+    if bidirectional:
+        existing_reverse = get_crossrefs(conn, to_id)
+        new_refs_reverse = [r for r in existing_reverse if r.get("id") != from_id]
+        if len(new_refs_reverse) < len(existing_reverse):
+            _store_crossrefs(conn, to_id, new_refs_reverse)
+            removed.append({"from": to_id, "to": from_id})
+
+    return {"status": "unlinked", "removed": removed}
+
+
+def detect_clusters(
+    conn: sqlite3.Connection,
+    min_cluster_size: int = 2,
+    min_score: float = 0.3,
+) -> List[Dict[str, Any]]:
+    """Detect clusters of related memories using connected components.
+
+    Args:
+        min_cluster_size: Minimum memories to form a cluster
+        min_score: Minimum similarity score to consider as connected
+
+    Returns:
+        List of clusters, each with member IDs and common tags
+    """
+    # Build adjacency graph from cross-references
+    all_memories = list_memories(conn)
+    memory_ids = {m["id"] for m in all_memories}
+    memory_tags = {m["id"]: set(m.get("tags", [])) for m in all_memories}
+
+    # Build graph edges
+    edges: Dict[int, set] = {mid: set() for mid in memory_ids}
+    for memory in all_memories:
+        mid = memory["id"]
+        refs = get_crossrefs(conn, mid)
+        for ref in refs:
+            ref_id = ref.get("id")
+            score = ref.get("score", 0)
+            if ref_id in memory_ids and score >= min_score:
+                edges[mid].add(ref_id)
+                edges[ref_id].add(mid)  # Make bidirectional for clustering
+
+    # Find connected components using BFS
+    visited: set = set()
+    clusters: List[List[int]] = []
+
+    for start_id in memory_ids:
+        if start_id in visited:
+            continue
+
+        # BFS to find all connected nodes
+        cluster: List[int] = []
+        queue = [start_id]
+        while queue:
+            node = queue.pop(0)
+            if node in visited:
+                continue
+            visited.add(node)
+            cluster.append(node)
+            for neighbor in edges[node]:
+                if neighbor not in visited:
+                    queue.append(neighbor)
+
+        if len(cluster) >= min_cluster_size:
+            clusters.append(cluster)
+
+    # Format clusters with metadata
+    result = []
+    for i, cluster_ids in enumerate(clusters):
+        # Find common tags
+        all_tags = [memory_tags.get(mid, set()) for mid in cluster_ids]
+        common_tags = set.intersection(*all_tags) if all_tags else set()
+
+        # Find most common tags (even if not in all)
+        tag_counts: Dict[str, int] = {}
+        for tags in all_tags:
+            for tag in tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        top_tags = sorted(tag_counts.keys(), key=lambda t: tag_counts[t], reverse=True)[:5]
+
+        result.append({
+            "cluster_id": i + 1,
+            "size": len(cluster_ids),
+            "memory_ids": sorted(cluster_ids),
+            "common_tags": list(common_tags),
+            "top_tags": top_tags,
+        })
+
+    # Sort by size descending
+    result.sort(key=lambda c: c["size"], reverse=True)
+    return result
+
+
 def _update_crossrefs(conn: sqlite3.Connection, memory_id: int) -> None:
     # Skip cross-reference computation for section memories
     record = get_memory(conn, memory_id)
-    if record and record.get("metadata", {}).get("type") == "section":
+    metadata = record.get("metadata") if record else None
+    if metadata and metadata.get("type") == "section":
         return
     related = _update_crossrefs_for_memory(conn, memory_id)
     for item in related:
@@ -1066,6 +1304,9 @@ def add_memory(
     metadata: Optional[Dict[str, Any]] = None,
     tags: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
+    # Validate and normalize content (trim, length check)
+    content = _validate_content(content)
+
     validated_tags = _validate_tags(tags)
     _enforce_tag_whitelist(validated_tags)
     tags_json = json.dumps(validated_tags, ensure_ascii=False)

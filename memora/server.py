@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
 
@@ -35,7 +36,50 @@ from .storage import (
     sync_to_cloud,
     update_crossrefs,
     update_memory,
+    _redact_secrets,
+    add_link,
+    remove_link,
+    detect_clusters,
+    EDGE_TYPES,
 )
+
+# Content type inference patterns
+TYPE_PATTERNS: List[tuple[str, str]] = [
+    (r'^(?:TODO|TASK)[:>\s]', 'todo'),
+    (r'^(?:BUG|ISSUE|FIX|ERROR)[:>\s]', 'issue'),
+    (r'^(?:NOTE|TIP|INFO)[:>\s]', 'note'),
+    (r'^(?:IDEA|FEATURE|ENHANCEMENT)[:>\s]', 'idea'),
+    (r'^(?:QUESTION|\?)[:>\s]', 'question'),
+    (r'^(?:WARN|WARNING|CAUTION)[:>\s]', 'warning'),
+]
+
+# Duplicate detection threshold
+DUPLICATE_THRESHOLD = 0.85
+
+
+def _infer_type(content: str) -> Optional[str]:
+    """Infer memory type from content prefix patterns."""
+    for pattern, type_name in TYPE_PATTERNS:
+        if re.match(pattern, content, re.IGNORECASE):
+            return type_name
+    return None
+
+
+def _suggest_tags(content: str, inferred_type: Optional[str]) -> List[str]:
+    """Suggest tags based on content and inferred type."""
+    suggestions = []
+
+    # Type-based suggestions
+    if inferred_type == 'todo':
+        suggestions.append('memora/todos')
+    elif inferred_type == 'issue':
+        suggestions.append('memora/issues')
+    elif inferred_type in ('note', 'idea', 'question'):
+        suggestions.append('memora/knowledge')
+
+    return suggestions
+
+
 from .graph import (
     export_graph_html,
     register_graph_routes,
@@ -306,8 +350,10 @@ def _extract_hierarchy_path(metadata: Optional[Any]) -> List[str]:
     return path
 
 
-def _compact_memory(memory: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_memory(memory: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Return a compact representation of a memory (id, preview, tags)."""
+    if memory is None:
+        return None
     content = memory.get("content", "")
     preview = content[:80] + "..." if len(content) > 80 else content
     return {
@@ -322,6 +368,8 @@ def _get_existing_hierarchy_paths() -> List[List[str]]:
     items = _list_memories(None, None, None, 0, None, None, None, None, None)
     paths_set: set = set()
     for memory in items:
+        if memory is None:
+            continue
         path = _extract_hierarchy_path(memory.get("metadata"))
         if path:
             # Add the full path and all parent paths
@@ -435,8 +483,20 @@ async def memory_create(
     existing_paths = _get_existing_hierarchy_paths() if new_path else []
     path_is_new = bool(new_path) and (new_path not in existing_paths)
 
+    # Initialize warnings dict
+    warnings: Dict[str, Any] = {}
+
+    # Auto-redact secrets/PII from content BEFORE saving
+    redacted_content = content.strip()
     try:
-        record = _create_memory(content=content.strip(), metadata=metadata, tags=tags or [])
+        redacted_content, secrets_redacted = _redact_secrets(redacted_content)
+        if secrets_redacted:
+            warnings["secrets_redacted"] = secrets_redacted
+    except Exception:
+        pass  # Don't fail on redaction errors
+
+    try:
+        record = _create_memory(content=redacted_content, metadata=metadata, tags=tags or [])
     except ValueError as exc:
         return {"error": "invalid_input", "message": str(exc)}
 
@@ -446,21 +506,54 @@ async def memory_create(
     if path_is_new:
         similar = _find_similar_paths(new_path, existing_paths)
         if similar:
-            result["warning"] = f"New hierarchy path created: {new_path}"
+            warnings["new_hierarchy_path"] = f"New hierarchy path created: {new_path}"
             result["existing_similar_paths"] = similar
             result["hint"] = "Did you mean to use one of these existing paths? Use memory_update to change if needed."
 
     # Search for similar memories and suggest consolidation
-    if suggest_similar:
-        similar_memories = _find_similar_for_consolidation(
-            record["id"], content, similarity_threshold
-        )
-        if similar_memories:
-            result["similar_memories"] = similar_memories
-            result["consolidation_hint"] = (
-                f"Found {len(similar_memories)} similar memories. "
-                "Consider: (1) merge content with memory_update, or (2) delete redundant ones with memory_delete."
+    if suggest_similar and record and record.get("id"):
+        try:
+            similar_memories = _find_similar_for_consolidation(
+                record["id"], redacted_content, similarity_threshold
             )
+            if similar_memories:
+                result["similar_memories"] = similar_memories
+                result["consolidation_hint"] = (
+                    f"Found {len(similar_memories)} similar memories. "
+                    "Consider: (1) merge content with memory_update, or (2) delete redundant ones with memory_delete."
+                )
+                # Check for potential duplicates (>0.85 similarity)
+                duplicates = [m for m in similar_memories if m and m.get("score", 0) >= DUPLICATE_THRESHOLD]
+                if duplicates:
+                    warnings["duplicate_warning"] = (
+                        f"Very similar memory exists (>={int(DUPLICATE_THRESHOLD*100)}% match). "
+                        f"Memory #{duplicates[0]['id']} has {int(duplicates[0]['score']*100)}% similarity."
+                    )
+        except Exception:
+            pass  # Don't fail on similarity search errors
+
+    # Add warnings to result if any
+    if warnings:
+        result["warnings"] = warnings
+
+    # Infer type and suggest tags (only if user didn't provide tags)
+    try:
+        suggestions: Dict[str, Any] = {}
+        inferred_type = _infer_type(redacted_content)
+        if inferred_type:
+            suggestions["type"] = inferred_type
+
+        suggested_tags = _suggest_tags(redacted_content, inferred_type)
+        # Only suggest tags not already applied
+        existing_tags = set(tags or [])
+        new_suggestions = [t for t in suggested_tags if t not in existing_tags]
+        if new_suggestions:
+            suggestions["tags"] = new_suggestions
+
+        if suggestions:
+            result["suggestions"] = suggestions
+    except Exception:
+        pass  # Don't fail on type inference errors
 
     return result
 
@@ -489,8 +582,10 @@ def _find_similar_for_consolidation(
     # Filter out the newly created memory and format results
     similar = []
     for item in results:
-        memory = item.get("memory", {})
-        if memory.get("id") == new_memory_id:
+        if item is None:
+            continue
+        memory = item.get("memory") or {}
+        if not memory or memory.get("id") == new_memory_id:
             continue
 
         mem_content = memory.get("content", "")
@@ -765,9 +860,10 @@ async def memory_get(memory_id: int, include_images: bool = False) -> Dict[str, 
     if not record:
         return {"error": "not_found", "id": memory_id}
 
-    if not include_images and record.get("metadata", {}).get("images"):
+    metadata = record.get("metadata") or {}
+    if not include_images and metadata.get("images"):
         record["metadata"]["images"] = [
-            {"caption": img.get("caption", "")} for img in record["metadata"]["images"]
+            {"caption": img.get("caption", "")} for img in metadata["images"]
         ]
 
     return {"memory": record}
@@ -984,6 +1080,94 @@ async def memory_boost(
     if not record:
         return {"error": "not_found", "id": memory_id}
     return {"memory": record, "boosted_by": boost_amount}
+
+
+@_with_connection(writes=True)
+def _add_link(conn, from_id: int, to_id: int, edge_type: str, bidirectional: bool):
+    return add_link(conn, from_id, to_id, edge_type, bidirectional)
+
+
+@_with_connection(writes=True)
+def _remove_link(conn, from_id: int, to_id: int, bidirectional: bool):
+    return remove_link(conn, from_id, to_id, bidirectional)
+
+
+@_with_connection
+def _detect_clusters(conn, min_cluster_size: int, min_score: float):
+    return detect_clusters(conn, min_cluster_size, min_score)
+
+
+@mcp.tool()
+async def memory_link(
+    from_id: int,
+    to_id: int,
+    edge_type: str = "references",
+    bidirectional: bool = True,
+) -> Dict[str, Any]:
+    """Create an explicit typed link between two memories.
+
+    Args:
+        from_id: Source memory ID
+        to_id: Target memory ID
+        edge_type: Type of relationship. Options:
+            - "references" (default): General reference
+            - "implements": Source implements/realizes target
+            - "supersedes": Source replaces/updates target
+            - "extends": Source builds upon target
+            - "contradicts": Source conflicts with target
+            - "related_to": Generic relationship
+        bidirectional: If True, also create reverse link (default: True)
+
+    Returns:
+        Dict with created links and their types
+    """
+    try:
+        return _add_link(from_id, to_id, edge_type, bidirectional)
+    except ValueError as e:
+        return {"error": "invalid_input", "message": str(e)}
+
+
+@mcp.tool()
+async def memory_unlink(
+    from_id: int,
+    to_id: int,
+    bidirectional: bool = True,
+) -> Dict[str, Any]:
+    """Remove a link between two memories.
+
+    Args:
+        from_id: Source memory ID
+        to_id: Target memory ID
+        bidirectional: If True, also remove reverse link (default: True)
+
+    Returns:
+        Dict with removed links
+    """
+    return _remove_link(from_id, to_id, bidirectional)
+
+
+@mcp.tool()
+async def memory_clusters(
+    min_cluster_size: int = 2,
+    min_score: float = 0.3,
+) -> Dict[str, Any]:
+    """Detect clusters of related memories.
+
+    Uses connected components algorithm to find groups of memories
+    that are linked together through cross-references.
+
+    Args:
+        min_cluster_size: Minimum memories to form a cluster (default: 2)
+        min_score: Minimum similarity score to consider connected (default: 0.3)
+
+    Returns:
+        List of clusters with member IDs, sizes, and common tags
+    """
+    clusters = _detect_clusters(min_cluster_size, min_score)
+    return {
+        "count": len(clusters),
+        "clusters": clusters,
+    }
 
 
 @mcp.tool()
