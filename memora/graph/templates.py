@@ -460,7 +460,11 @@ function showPanel(mem) {
 
     // Show issue or TODO badges if applicable
     var badgesHtml = renderIssueBadges(mem.metadata) + renderTodoBadges(mem.metadata);
-    document.getElementById('panel-meta').innerHTML = badgesHtml + 'Created: ' + mem.created;
+    var metaHtml = badgesHtml + 'Created: ' + mem.created;
+    if (mem.updated) {
+        metaHtml += '<br>Updated: ' + mem.updated;
+    }
+    document.getElementById('panel-meta').innerHTML = metaHtml;
 
     document.getElementById('panel-tags').innerHTML = mem.tags.map(function(t) {
         return '<span class="tag" onclick="filterByTag(\\'' + t + '\\'); event.stopPropagation();">' + t + '</span>';

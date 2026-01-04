@@ -372,6 +372,7 @@ def get_memory_for_api(memory_id: int) -> Dict[str, Any]:
             "content": m["content"],
             "tags": m.get("tags", []),
             "created": m.get("created_at", ""),
+            "updated": m.get("updated_at"),
             "metadata": meta,
         }
     finally:
@@ -422,6 +423,7 @@ def export_graph_html(
                 "id": m["id"],
                 "tags": m.get("tags", []),
                 "created": m.get("created_at", ""),
+                "updated": m.get("updated_at"),
                 "content": m["content"],
                 "metadata": meta,
             }

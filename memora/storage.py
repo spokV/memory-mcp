@@ -166,7 +166,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             content TEXT NOT NULL,
             metadata TEXT,
             tags TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
         )
         """
     )
@@ -176,6 +177,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_crossrefs_table(conn)
     _ensure_events_table(conn)
     _ensure_importance_columns(conn)
+    _ensure_updated_at_column(conn)
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
@@ -259,6 +261,16 @@ def _ensure_importance_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0")
 
     conn.commit()
+
+
+def _ensure_updated_at_column(conn: sqlite3.Connection) -> None:
+    """Add updated_at column to memories table if it doesn't exist."""
+    cursor = conn.execute("PRAGMA table_info(memories)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    if "updated_at" not in columns:
+        conn.execute("ALTER TABLE memories ADD COLUMN updated_at TEXT")
+        conn.commit()
 
 
 def _build_metadata_dict(metadata: Mapping[str, Any]) -> Dict[str, Any]:
@@ -724,16 +736,17 @@ def _fts_delete(conn: sqlite3.Connection, memory_id: int) -> None:
 def _serialise_row(row: sqlite3.Row) -> Dict[str, Any]:
     metadata = row["metadata"]
     tags = row["tags"]
+    row_keys = row.keys() if hasattr(row, 'keys') else []
     result = {
         "id": row["id"],
         "content": row["content"],
         "metadata": _present_metadata(json.loads(metadata)) if metadata else None,
         "tags": json.loads(tags) if tags else [],
         "created_at": row["created_at"],
+        "updated_at": row["updated_at"] if "updated_at" in row_keys else None,
     }
 
     # Add importance fields if available (may not exist in older schemas during migration)
-    row_keys = row.keys() if hasattr(row, 'keys') else []
     if "importance" in row_keys:
         base_importance = row["importance"] if row["importance"] is not None else 1.0
         access_count = row["access_count"] if "access_count" in row_keys and row["access_count"] is not None else 0
@@ -1601,7 +1614,7 @@ def get_memory(
         Memory dict or None if not found
     """
     row = conn.execute(
-        """SELECT id, content, metadata, tags, created_at,
+        """SELECT id, content, metadata, tags, created_at, updated_at,
                   importance, last_accessed, access_count
            FROM memories WHERE id = ?""",
         (memory_id,),
@@ -1646,7 +1659,7 @@ def update_memory(
 
     # Update the memory
     conn.execute(
-        "UPDATE memories SET content = ?, metadata = ?, tags = ? WHERE id = ?",
+        "UPDATE memories SET content = ?, metadata = ?, tags = ?, updated_at = datetime('now') WHERE id = ?",
         (new_content, metadata_json, tags_json, memory_id),
     )
 
@@ -1803,8 +1816,8 @@ def list_memories(
             limit_params.append(offset)
 
     # Column list including importance fields
-    cols_fts = "m.id, m.content, m.metadata, m.tags, m.created_at, m.importance, m.last_accessed, m.access_count"
-    cols_plain = "id, content, metadata, tags, created_at, importance, last_accessed, access_count"
+    cols_fts = "m.id, m.content, m.metadata, m.tags, m.created_at, m.updated_at, m.importance, m.last_accessed, m.access_count"
+    cols_plain = "id, content, metadata, tags, created_at, updated_at, importance, last_accessed, access_count"
 
     # Order clause - use importance_score calculation or created_at
     order_fts = "m.created_at DESC"
