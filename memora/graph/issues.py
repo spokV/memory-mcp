@@ -3,11 +3,11 @@
 from typing import Any, Dict, List, Optional
 
 # Status colors for issue nodes
+# open = red, closed:complete = green, closed:not_planned = gray
 STATUS_COLORS = {
-    "open": "#ff7b72",        # Red
-    "in_progress": "#ffa657", # Orange
-    "resolved": "#7ee787",    # Green
-    "wontfix": "#8b949e",     # Gray
+    "open": "#ff7b72",              # Red
+    "closed:complete": "#7ee787",   # Green
+    "closed:not_planned": "#8b949e", # Gray
 }
 
 # Severity colors (used for border/accent)
@@ -32,10 +32,27 @@ def is_issue(metadata: Optional[Dict[str, Any]]) -> bool:
 
 
 def get_issue_status(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Get issue status from metadata, or None if not an issue."""
+    """Get issue status from metadata, or None if not an issue.
+
+    Returns combined status like 'open', 'closed:complete', or 'closed:not_planned'.
+    Also handles legacy statuses: resolved -> closed:complete, wontfix -> closed:not_planned
+    """
     if not is_issue(metadata):
         return None
-    return metadata.get("status", "open")
+    status = metadata.get("status", "open")
+
+    # Handle legacy statuses
+    if status == "resolved":
+        return "closed:complete"
+    if status == "wontfix":
+        return "closed:not_planned"
+    if status == "in_progress":
+        return "open"  # Map to open (active)
+
+    if status == "closed":
+        reason = metadata.get("closed_reason", "complete")
+        return f"closed:{reason}"
+    return status
 
 
 def get_issue_severity(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -116,11 +133,16 @@ def build_issue_legend_html(
 
     html_parts = ['<div id="issues-legend"><b>Issues</b>']
 
-    # Status items
+    # Status items with display names
+    status_display = {
+        "open": "Open",
+        "closed:complete": "Closed (Complete)",
+        "closed:not_planned": "Closed (Not Planned)",
+    }
     for status, color in STATUS_COLORS.items():
         count = len(status_to_nodes.get(status, []))
         if count > 0:
-            display_name = status.replace("_", " ").title()
+            display_name = status_display.get(status, status.title())
             html_parts.append(
                 f'<div class="legend-item issue-status" data-status="{status}" '
                 f'onclick="filterByStatus(\'{status}\')">'
@@ -151,15 +173,24 @@ def get_issue_panel_html(metadata: Dict[str, Any]) -> str:
         return ""
 
     status = metadata.get("status", "open")
+    closed_reason = metadata.get("closed_reason")
     severity = metadata.get("severity", "unknown")
     component = metadata.get("component", "")
     commit = metadata.get("commit", "")
 
-    status_color = STATUS_COLORS.get(status, "#8b949e")
+    # Build combined status key for color lookup
+    if status == "closed" and closed_reason:
+        status_key = f"closed:{closed_reason}"
+        status_display = f"CLOSED ({closed_reason.upper().replace('_', ' ')})"
+    else:
+        status_key = status
+        status_display = status.upper()
+
+    status_color = STATUS_COLORS.get(status_key, "#8b949e")
     severity_color = SEVERITY_COLORS.get(severity, "#8b949e")
 
     html = f'''<div class="issue-badges">
-        <span class="issue-badge" style="background:{status_color}">{status.upper()}</span>
+        <span class="issue-badge" style="background:{status_color}">{status_display}</span>
         <span class="issue-badge" style="background:{severity_color}">{severity}</span>'''
 
     if component:

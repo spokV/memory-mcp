@@ -198,15 +198,24 @@ function renderImages(metadata) {
 function renderIssueBadges(metadata) {
     if (!metadata || metadata.type !== 'issue') return '';
     var status = metadata.status || 'open';
+    var closedReason = metadata.closed_reason || '';
     var severity = metadata.severity || 'unknown';
     var component = metadata.component || '';
     var commit = metadata.commit || '';
 
-    var statusColors = {open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'};
+    // Build combined status key for color lookup
+    var statusKey = status;
+    var statusDisplay = status.toUpperCase();
+    if (status === 'closed' && closedReason) {
+        statusKey = 'closed:' + closedReason;
+        statusDisplay = 'CLOSED (' + closedReason.toUpperCase().replace('_', ' ') + ')';
+    }
+
+    var statusColors = {open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'};
     var severityColors = {critical: '#f85149', major: '#d29922', minor: '#8b949e'};
 
     var html = '<div class="issue-badges">';
-    html += '<span class="issue-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="issue-badge" style="background:' + (statusColors[statusKey] || '#8b949e') + '">' + statusDisplay + '</span>';
     html += '<span class="issue-badge" style="background:' + (severityColors[severity] || '#8b949e') + '">' + severity + '</span>';
     if (component) html += '<span class="issue-badge component">' + component + '</span>';
     if (commit) html += '<span class="issue-badge commit">#' + commit.slice(0,7) + '</span>';
@@ -217,14 +226,23 @@ function renderIssueBadges(metadata) {
 function renderTodoBadges(metadata) {
     if (!metadata || metadata.type !== 'todo') return '';
     var status = metadata.status || 'open';
+    var closedReason = metadata.closed_reason || '';
     var priority = metadata.priority || 'medium';
     var category = metadata.category || '';
 
-    var statusColors = {open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'};
+    // Build combined status key for color lookup
+    var statusKey = status;
+    var statusDisplay = status.toUpperCase();
+    if (status === 'closed' && closedReason) {
+        statusKey = 'closed:' + closedReason;
+        statusDisplay = 'CLOSED (' + closedReason.toUpperCase().replace('_', ' ') + ')';
+    }
+
+    var statusColors = {open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'};
     var priorityColors = {high: '#f85149', medium: '#d29922', low: '#8b949e'};
 
     var html = '<div class="todo-badges">';
-    html += '<span class="todo-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="todo-badge" style="background:' + (statusColors[statusKey] || '#8b949e') + '">' + statusDisplay + '</span>';
     html += '<span class="todo-badge" style="background:' + (priorityColors[priority] || '#8b949e') + '">' + priority + '</span>';
     if (category) html += '<span class="todo-badge category">' + category + '</span>';
     html += '</div>';
@@ -710,7 +728,7 @@ def get_spa_html() -> str:
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
                 issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
-                var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
+                var statusColors = {{open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
@@ -734,10 +752,11 @@ def get_spa_html() -> str:
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
                 todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
-                var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
+                var todoStatusColors = {{open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
+                var todoStatusDisplay = {{open: 'Open', 'closed:complete': 'Closed (Complete)', 'closed:not_planned': 'Closed (Not Planned)'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
-                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    var displayName = todoStatusDisplay[status] || status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 // Add categories
@@ -890,7 +909,7 @@ def get_spa_html() -> str:
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
                 issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
-                var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
+                var statusColors = {{open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
@@ -912,10 +931,11 @@ def get_spa_html() -> str:
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
                 todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
-                var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
+                var todoStatusColors = {{open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
+                var todoStatusDisplay = {{open: 'Open', 'closed:complete': 'Closed (Complete)', 'closed:not_planned': 'Closed (Not Planned)'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
-                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    var displayName = todoStatusDisplay[status] || status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{
