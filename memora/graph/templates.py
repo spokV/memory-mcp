@@ -667,7 +667,7 @@ def get_spa_html() -> str:
     <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div id="duplicates-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
-    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search</div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search (or #id)</div>
     <div id="node-tooltip"></div>
     <script>
         var graphData = null;
@@ -852,12 +852,20 @@ def get_spa_html() -> str:
         }}
 
         function searchMemories(query) {{
-            if (!query || query.length < 2) {{
+            if (!query || query.length < 1) {{
                 resetFilter();
                 return;
             }}
-            query = query.toLowerCase();
-            var matchingIds = graphData.nodes.filter(n => n.label.toLowerCase().includes(query)).map(n => n.id);
+            // Check if query is an ID (number or #number)
+            var idMatch = query.match(/^#?(\\d+)$/);
+            var matchingIds;
+            if (idMatch) {{
+                var searchId = parseInt(idMatch[1], 10);
+                matchingIds = graphData.nodes.filter(n => n.id === searchId).map(n => n.id);
+            }} else {{
+                query = query.toLowerCase();
+                matchingIds = graphData.nodes.filter(n => n.label.toLowerCase().includes(query)).map(n => n.id);
+            }}
             applyFilter(matchingIds);
         }}
 
