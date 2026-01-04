@@ -499,12 +499,20 @@ function showPanel(mem) {
     if (mem.metadata) {
         // Handle issues
         if (mem.metadata.type === 'issue' && mem.metadata.status) {
-            var issueEl = document.querySelector('.legend-item.issue-status[data-status="' + mem.metadata.status + '"]');
+            var statusKey = mem.metadata.status;
+            if (statusKey === 'closed' && mem.metadata.closed_reason) {
+                statusKey = 'closed:' + mem.metadata.closed_reason;
+            }
+            var issueEl = document.querySelector('.legend-item.issue-status[data-status="' + statusKey + '"]');
             if (issueEl) issueEl.classList.add('selected');
         }
         // Handle TODOs
         else if (mem.metadata.type === 'todo' && mem.metadata.status) {
-            var todoEl = document.querySelector('.legend-item.todo-status[data-todo-status="' + mem.metadata.status + '"]');
+            var statusKey = mem.metadata.status;
+            if (statusKey === 'closed' && mem.metadata.closed_reason) {
+                statusKey = 'closed:' + mem.metadata.closed_reason;
+            }
+            var todoEl = document.querySelector('.legend-item.todo-status[data-todo-status="' + statusKey + '"]');
             if (todoEl) todoEl.classList.add('selected');
         }
         // Handle regular memories with sections
