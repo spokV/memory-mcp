@@ -1,7 +1,13 @@
 """Graph data generation and transformation logic."""
 
 import json
+import os
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+# Stale threshold for closed issues/TODOs (in days)
+# Closed items older than this will appear gray and smaller
+STALE_DAYS = int(os.getenv("MEMORA_STALE_DAYS", "30"))
 
 from ..storage import (
     connect,
@@ -29,6 +35,42 @@ from .templates import build_static_html
 
 # Similarity threshold for duplicate detection
 DUPLICATE_THRESHOLD = 0.85
+
+# Stale styling
+STALE_COLOR = "#8b949e"  # Gray
+STALE_SIZE_FACTOR = 0.7  # Reduce size to 70%
+
+
+def _is_stale_closed(metadata: Optional[Dict], updated_at: Optional[str], created_at: Optional[str]) -> bool:
+    """Check if a closed issue/TODO is stale (older than STALE_DAYS threshold).
+
+    Uses updated_at if available, otherwise falls back to created_at.
+    Only applies to closed issues/TODOs.
+    """
+    if not metadata:
+        return False
+
+    # Only check issues and TODOs that are closed
+    mem_type = metadata.get("type")
+    status = metadata.get("status")
+
+    if mem_type not in ("issue", "todo"):
+        return False
+    if status != "closed":
+        return False
+
+    # Get the reference date (prefer updated_at, fall back to created_at)
+    date_str = updated_at or created_at
+    if not date_str:
+        return False
+
+    try:
+        # Parse the date string (format: "2025-12-23 19:59:31")
+        ref_date = datetime.strptime(date_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+        threshold = datetime.now() - timedelta(days=STALE_DAYS)
+        return ref_date < threshold
+    except (ValueError, TypeError):
+        return False
 
 
 def is_section(metadata: Optional[Dict]) -> bool:
@@ -181,6 +223,11 @@ def _build_nodes(
                 "border": "#f85149",
             }
             node["borderWidth"] = 3
+
+        # Apply stale styling for old closed issues/TODOs
+        if _is_stale_closed(meta, m.get("updated_at"), m.get("created_at")):
+            node["color"] = STALE_COLOR
+            node["size"] = int(node.get("size", 12) * STALE_SIZE_FACTOR)
 
         nodes.append(node)
 
