@@ -144,9 +144,6 @@ mermaid.initialize({
 // Set up marked.js with custom renderer for mermaid
 marked.use({
     renderer: {
-        link: function(token) {
-            return '<a href="' + token.href + '" target="_blank">' + token.text + '</a>';
-        },
         code: function(code, infostring, escaped) {
             var language = (infostring || '').trim().split(' ')[0];
             if (language === 'mermaid') {
