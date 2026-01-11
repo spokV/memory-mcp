@@ -55,6 +55,74 @@ div.vis-tooltip {
 #resize-handle { width: 6px; background: #30363d; cursor: ew-resize; display: none; }
 #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
 #resize-handle.active { display: block; }
+
+/* Timeline slider */
+#timeline-container {
+    position: absolute;
+    bottom: 50px;
+    left: 220px;
+    width: 280px;
+    background: rgba(22,27,34,0.95);
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    z-index: 100;
+}
+#timeline-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: #8b949e;
+}
+#timeline-label .title { color: #58a6ff; font-weight: 500; }
+#timeline-label .date-range { color: #c9d1d9; }
+#timeline-slider {
+    width: 100%;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: linear-gradient(to right, #238636 0%, #58a6ff 100%, #30363d 100%);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+}
+#timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #58a6ff;
+    border-radius: 50%;
+    cursor: grab;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: transform 0.1s ease;
+}
+#timeline-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    background: #79b8ff;
+}
+#timeline-slider::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+}
+#timeline-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: #58a6ff;
+    border-radius: 50%;
+    cursor: grab;
+    border: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#timeline-dates {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 10px;
+    color: #6e7681;
+}
 #legend {
     position: absolute;
     top: 10px;
@@ -334,6 +402,11 @@ function getConnectedNodes(nodeId, hops) {
 }
 
 function focusOnNode(nodeId) {
+    // Reset timeline when focusing on a node to avoid conflicting states
+    if (timelineActive) {
+        resetTimeline();
+    }
+
     focusedNodeId = nodeId;
     var hop1 = getConnectedNodes(nodeId, 1);  // Direct connections
     var hop2 = getConnectedNodes(nodeId, 2);  // Includes hop1 + indirect
@@ -435,6 +508,142 @@ document.addEventListener('mouseup', function() {
     resizeHandle.classList.remove('dragging');
     document.body.style.cursor = '';
 });
+"""
+
+# JavaScript for timeline slider
+TIMELINE_JS = """
+var timelineData = null;
+var timelineActive = false;
+
+function initTimeline(nodeTimestamps, minDate, maxDate) {
+    if (!nodeTimestamps || Object.keys(nodeTimestamps).length === 0) return;
+
+    timelineData = {
+        timestamps: nodeTimestamps,
+        minTime: new Date(minDate).getTime(),
+        maxTime: new Date(maxDate).getTime(),
+        sortedNodes: Object.entries(nodeTimestamps)
+            .map(([id, ts]) => ({ id: parseInt(id), time: new Date(ts).getTime() }))
+            .sort((a, b) => a.time - b.time)
+    };
+
+    // Set date labels
+    document.getElementById('timeline-min-date').textContent = formatDate(minDate);
+    document.getElementById('timeline-max-date').textContent = formatDate(maxDate);
+
+    // Initialize slider to 100% (show all)
+    var slider = document.getElementById('timeline-slider');
+    slider.value = 100;
+    updateTimelineProgress(100);
+
+    // Show container
+    document.getElementById('timeline-container').style.display = 'block';
+}
+
+function formatDate(dateStr) {
+    var d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function updateTimelineProgress(percent) {
+    var slider = document.getElementById('timeline-slider');
+    // Update slider track: colored portion (green->blue gradient) + gray remainder
+    slider.style.background = 'linear-gradient(to right, #238636 0%, #58a6ff ' + percent + '%, #30363d ' + percent + '%)';
+}
+
+function onTimelineChange(value) {
+    if (!timelineData) return;
+
+    // Exit focus mode when using timeline to avoid conflicting states
+    exitFocusMode();
+
+    timelineActive = true;
+    var percent = parseInt(value);
+    updateTimelineProgress(percent);
+
+    // Calculate cutoff time based on slider position
+    var timeRange = timelineData.maxTime - timelineData.minTime;
+    var cutoffTime = timelineData.minTime + (timeRange * percent / 100);
+
+    // Update date display
+    var cutoffDate = new Date(cutoffTime);
+    document.getElementById('timeline-current').textContent =
+        'Showing: ' + formatDate(cutoffDate.toISOString());
+
+    // Get node IDs up to cutoff
+    // Nodes without timestamps are always visible (they predate timestamp tracking)
+    var visibleIds = new Set();
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    for (var n of sourceNodes) {
+        if (!timelineData.timestamps[n.id]) {
+            // No timestamp = always visible
+            visibleIds.add(n.id);
+        }
+    }
+    for (var node of timelineData.sortedNodes) {
+        if (node.time <= cutoffTime) {
+            visibleIds.add(node.id);
+        }
+    }
+
+    // Update node visibility with fade effect
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var nodeUpdates = sourceNodes.map(function(n) {
+        if (visibleIds.has(n.id)) {
+            // Visible - full opacity, highlight newer ones
+            var nodeTime = timelineData.timestamps[n.id] ? new Date(timelineData.timestamps[n.id]).getTime() : 0;
+            var recency = (nodeTime - timelineData.minTime) / timeRange;
+            // Highlight recently revealed nodes with a glow
+            var isRecent = Math.abs(nodeTime - cutoffTime) < (timeRange * 0.05);
+            return {
+                id: n.id,
+                opacity: 1,
+                borderWidth: isRecent ? 4 : (n.borderWidth || 2),
+                color: isRecent ? { background: n.color.background || n.color, border: '#58a6ff' } : n.color
+            };
+        } else {
+            // Hidden - very faded
+            return { id: n.id, opacity: 0.08 };
+        }
+    });
+
+    // Update edges - only show edges between visible nodes
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    var edgeUpdates = sourceEdges.map(function(e) {
+        if (visibleIds.has(e.from) && visibleIds.has(e.to)) {
+            return { id: e.id, hidden: false, color: e.color || 'rgba(48,54,61,0.6)' };
+        } else {
+            return { id: e.id, hidden: true };
+        }
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
+
+function resetTimeline() {
+    if (!timelineData) return;
+
+    timelineActive = false;
+    var slider = document.getElementById('timeline-slider');
+    slider.value = 100;
+    updateTimelineProgress(100);
+    document.getElementById('timeline-current').textContent = 'Drag to filter by time';
+
+    // Restore all nodes
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+
+    var nodeUpdates = sourceNodes.map(function(n) {
+        return { id: n.id, opacity: 1, borderWidth: n.borderWidth || 2, color: n.color };
+    });
+    var edgeUpdates = sourceEdges.map(function(e) {
+        return { id: e.id, hidden: false, color: e.color || 'rgba(48,54,61,0.6)' };
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
 """
 
 # JavaScript for custom tooltip
@@ -550,7 +759,7 @@ def get_spa_css() -> str:
 
 def get_full_js() -> str:
     """Get complete JavaScript for graph functionality."""
-    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, TOOLTIP_JS, PANEL_JS, RESIZE_JS])
+    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, TOOLTIP_JS, PANEL_JS, RESIZE_JS, TIMELINE_JS])
 
 
 def build_static_html(
@@ -569,6 +778,9 @@ def build_static_html(
     issues_legend_html: str,
     todos_legend_html: str,
     duplicate_ids_json: str = "[]",
+    node_timestamps_json: str = "{}",
+    min_date: str = "",
+    max_date: str = "",
 ) -> str:
     """Build complete static HTML for export."""
     css = get_full_css()
@@ -606,7 +818,19 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
     </div>
     <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}{duplicates_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b>{sections_html}</div>
-    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom</div>
+    <div id="timeline-container" style="display:none;">
+        <div id="timeline-label">
+            <span class="title">Timeline</span>
+            <span id="timeline-current" class="date-range">Drag to filter by time</span>
+            <span class="reset" onclick="resetTimeline()" style="cursor:pointer;color:#58a6ff;">Reset</span>
+        </div>
+        <input type="range" id="timeline-slider" min="0" max="100" value="100" oninput="onTimelineChange(this.value)">
+        <div id="timeline-dates">
+            <span id="timeline-min-date">Oldest</span>
+            <span id="timeline-max-date">Newest</span>
+        </div>
+    </div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Drag timeline to filter by date</div>
     <div id="node-tooltip"></div>
     <script>
         var memoriesData = {memories_json};
@@ -661,6 +885,10 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
         network.on("blurNode", function() {{
             hideNodeTooltip();
         }});
+
+        // Initialize timeline
+        var nodeTimestamps = {node_timestamps_json};
+        initTimeline(nodeTimestamps, "{min_date}", "{max_date}");
     </script>
 </body>
 </html>'''
@@ -693,8 +921,20 @@ def get_spa_html() -> str:
     </div>
     <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div id="duplicates-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
+    <div id="timeline-container" style="display:none;">
+        <div id="timeline-label">
+            <span class="title">Timeline</span>
+            <span id="timeline-current" class="date-range">Drag to filter by time</span>
+            <span class="reset" onclick="resetTimeline()" style="cursor:pointer;color:#58a6ff;">Reset</span>
+        </div>
+        <input type="range" id="timeline-slider" min="0" max="100" value="100" oninput="onTimelineChange(this.value)">
+        <div id="timeline-dates">
+            <span id="timeline-min-date">Oldest</span>
+            <span id="timeline-max-date">Newest</span>
+        </div>
+    </div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
-    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search (or #id)</div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search (or #id) | Drag timeline</div>
     <div id="node-tooltip"></div>
     <script>
         var graphData = null;
@@ -862,6 +1102,11 @@ def get_spa_html() -> str:
             network.on('blurNode', function() {{
                 hideNodeTooltip();
             }});
+
+            // Initialize timeline if data is available
+            if (graphData.nodeTimestamps && graphData.minDate && graphData.maxDate) {{
+                initTimeline(graphData.nodeTimestamps, graphData.minDate, graphData.maxDate);
+            }}
         }}
 
         async function showMemoryAsync(nodeId) {{

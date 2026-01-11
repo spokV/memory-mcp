@@ -27,18 +27,18 @@ A lightweight Model Context Protocol (MCP) server that persists shared memories 
 - **Knowledge Graph** - Interactive HTML visualization with Mermaid diagram rendering
 - **Live Graph Server** - Auto-starts HTTP server for remote access via SSH
 - **Statistics & Analytics** - Tag usage, trends, and connection insights
-- **Zero Dependencies** - Works out-of-box with Python stdlib (optional backends available)
 
 ## Install
 
 ```bash
-# From GitHub
 pip install git+https://github.com/agentic-mcp-tools/memora.git
+```
 
-# With extras
-pip install -e ".[cloud]"       # S3/R2/GCS cloud storage (boto3)
-pip install -e ".[embeddings]"  # semantic search (sentence-transformers)
-pip install -e ".[all]"         # cloud + embeddings + dev tools
+Includes cloud storage (S3/R2) and OpenAI embeddings out of the box.
+
+```bash
+# Optional: local embeddings (offline, ~2GB for PyTorch)
+pip install "memora[local]" @ git+https://github.com/agentic-mcp-tools/memora.git
 ```
 
 ## Usage
@@ -140,13 +140,13 @@ Add to `~/.codex/config.toml`:
 
 ## Semantic Search & Embeddings
 
-Memora supports three embedding backends for semantic search:
+Memora supports three embedding backends:
 
 | Backend | Install | Quality | Speed |
 |---------|---------|---------|-------|
-| `tfidf` (default) | None | Basic keyword matching | Fast |
-| `sentence-transformers` | `pip install sentence-transformers` | True semantic understanding | Medium |
-| `openai` | `pip install openai` | High quality | API latency |
+| `openai` (default) | Included | High quality | API latency |
+| `sentence-transformers` | `pip install memora[local]` | Good, runs offline | Medium |
+| `tfidf` | Included | Basic keyword matching | Fast |
 
 **Automatic:** Embeddings and cross-references are computed automatically when you `memory_create`, `memory_update`, or `memory_create_batch`.
 

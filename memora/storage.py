@@ -38,7 +38,7 @@ else:
     STORAGE_BACKEND = LocalSQLiteBackend(DB_PATH)
 
 # Embedding backend configuration
-EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "tfidf")  # tfidf, sentence-transformers, openai
+EMBEDDING_MODEL = os.getenv("MEMORA_EMBEDDING_MODEL", "openai")  # openai, sentence-transformers, tfidf
 
 # LLM configuration for deduplication comparison
 LLM_ENABLED = os.getenv("MEMORA_LLM_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -107,6 +107,122 @@ def _validate_content(content: str) -> str:
         raise ValueError(f"Content too long (max {MAX_CONTENT_LENGTH} characters)")
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# Auto-detection of memory types (issue, todo) from content
+# ---------------------------------------------------------------------------
+
+# Keywords that suggest content is about a bug/issue
+_ISSUE_KEYWORDS = [
+    "bug", "fix", "fixed", "error", "crash", "broken", "resolve", "resolved",
+    "problem", "issue", "fault", "defect", "patch", "hotfix", "regression",
+]
+
+# Keywords that suggest content is a TODO/task
+_TODO_KEYWORDS = [
+    "todo", "task", "implement", "add feature", "need to", "should add",
+    "plan to", "will add", "must add", "want to add", "roadmap",
+]
+
+# Patterns that strongly suggest closed/resolved issues
+_RESOLVED_PATTERNS = [
+    r"\*\*fix\*\*",  # **Fix** or **fix**
+    r"fix(?:ed)?:",  # Fix: or Fixed:
+    r"resolved?:",   # Resolve: or Resolved:
+    r"problem:.*(?:fix|solution)",  # Problem: ... fix/solution
+    r"root cause:",  # Root cause analysis
+]
+
+
+def _detect_memory_type(
+    content: str,
+    metadata: Optional[Dict[str, Any]],
+    tags: Optional[List[str]],
+) -> Optional[Dict[str, Any]]:
+    """Auto-detect if content should be an issue or TODO.
+
+    Returns metadata dict to merge if type detected, None otherwise.
+    Only detects if no explicit type is already set.
+    """
+    # Don't override if type is already explicitly set
+    if metadata and metadata.get("type"):
+        return None
+
+    # Don't detect if already tagged as issue or todo
+    if tags:
+        if "memora/issues" in tags or "memora/todos" in tags:
+            return None
+
+    content_lower = content.lower()
+
+    # Count keyword matches
+    issue_matches = sum(1 for kw in _ISSUE_KEYWORDS if kw in content_lower)
+    todo_matches = sum(1 for kw in _TODO_KEYWORDS if kw in content_lower)
+
+    # Check for resolved patterns (stronger signal for closed issues)
+    has_resolved_pattern = any(
+        re.search(pattern, content_lower) for pattern in _RESOLVED_PATTERNS
+    )
+
+    # Require at least 2 keyword matches to avoid false positives
+    # Exception: resolved patterns are a strong enough signal alone
+    if issue_matches >= 2 or (issue_matches >= 1 and has_resolved_pattern):
+        # Detect if it's a closed/resolved issue or open
+        is_closed = has_resolved_pattern or any(
+            word in content_lower for word in ["fixed", "resolved", "patched"]
+        )
+
+        return {
+            "_detected_type": "issue",
+            "_auto_metadata": {
+                "type": "issue",
+                "status": "closed" if is_closed else "open",
+                "closed_reason": "complete" if is_closed else None,
+                "severity": "minor",
+                "category": "bug",
+            },
+            "_auto_tags": ["memora/issues"],
+        }
+
+    if todo_matches >= 2:
+        return {
+            "_detected_type": "todo",
+            "_auto_metadata": {
+                "type": "todo",
+                "status": "open",
+                "priority": "medium",
+            },
+            "_auto_tags": ["memora/todos"],
+        }
+
+    return None
+
+
+def _apply_auto_detection(
+    content: str,
+    metadata: Optional[Dict[str, Any]],
+    tags: Optional[List[str]],
+) -> tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
+    """Apply auto-detection and return updated metadata and tags.
+
+    Returns (updated_metadata, updated_tags) tuple.
+    """
+    detection = _detect_memory_type(content, metadata, tags)
+    if not detection:
+        return metadata, tags
+
+    # Merge detected metadata with provided metadata
+    updated_metadata = dict(metadata) if metadata else {}
+    updated_metadata.update(detection["_auto_metadata"])
+
+    # Add detected tags
+    updated_tags = list(tags) if tags else []
+    for tag in detection["_auto_tags"]:
+        if tag not in updated_tags:
+            updated_tags.append(tag)
+
+    return updated_metadata, updated_tags
 
 
 def _emit_event(conn: sqlite3.Connection, memory_id: int, tags: List[str]) -> None:
@@ -1493,6 +1609,9 @@ def add_memory(
     # Validate and normalize content (trim, length check)
     content = _validate_content(content)
 
+    # Auto-detect memory type (issue/todo) from content if not explicitly set
+    metadata, tags = _apply_auto_detection(content, metadata, tags)
+
     validated_tags = _validate_tags(tags)
     _enforce_tag_whitelist(validated_tags)
     tags_json = json.dumps(validated_tags, ensure_ascii=False)
@@ -1558,6 +1677,8 @@ def add_memories(
         content = str(entry["content"]).strip()
         metadata = entry.get("metadata")
         tags = entry.get("tags") or []
+        # Auto-detect memory type (issue/todo) from content if not explicitly set
+        metadata, tags = _apply_auto_detection(content, metadata, tags)
         prepared_metadata = _prepare_metadata(metadata)
         validated_tags = _validate_tags(tags)
         _enforce_tag_whitelist(validated_tags)

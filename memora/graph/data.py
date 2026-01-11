@@ -305,6 +305,35 @@ def _build_edges(conn, memories: List[Dict], min_score: float) -> List[Dict]:
     return edges
 
 
+def _build_timeline_data(memories: List[Dict]) -> tuple:
+    """Build timeline data from memories.
+
+    Returns:
+        (node_timestamps, min_date, max_date) tuple
+        - node_timestamps: dict mapping node ID to created_at timestamp
+        - min_date: earliest date string
+        - max_date: latest date string
+    """
+    node_timestamps: Dict[int, str] = {}
+    dates = []
+
+    for m in memories:
+        # Skip section memories
+        if is_section(m.get("metadata")):
+            continue
+
+        created_at = m.get("created_at")
+        if created_at:
+            node_timestamps[m["id"]] = created_at
+            dates.append(created_at)
+
+    if not dates:
+        return {}, "", ""
+
+    dates.sort()
+    return node_timestamps, dates[0], dates[-1]
+
+
 def _build_legend_html(tag_colors: Dict[str, str]) -> str:
     """Build HTML for tag legend."""
     return "".join(
@@ -386,6 +415,9 @@ def get_graph_data(min_score: float = 0.40, rebuild: bool = False) -> Dict[str, 
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
 
+        # Build timeline data
+        node_timestamps, min_date, max_date = _build_timeline_data(memories)
+
         return {
             "nodes": nodes,
             "edges": edges,
@@ -398,6 +430,9 @@ def get_graph_data(min_score: float = 0.40, rebuild: bool = False) -> Dict[str, 
             "todoStatusToNodes": todo_status_to_nodes,
             "todoCategoryToNodes": todo_category_to_nodes,
             "duplicateIds": list(duplicate_ids),
+            "nodeTimestamps": node_timestamps,
+            "minDate": min_date,
+            "maxDate": max_date,
         }
 
     finally:
@@ -462,6 +497,9 @@ def export_graph_html(
         todo_status_to_nodes = build_todo_status_to_nodes(memories)
         todo_category_to_nodes = build_todo_category_to_nodes(memories)
 
+        # Build timeline data
+        node_timestamps, min_date, max_date = _build_timeline_data(memories)
+
         # Build memories data for inline display
         memories_data = {}
         for m in memories:
@@ -497,6 +535,9 @@ def export_graph_html(
             issues_legend_html=issues_legend_html,
             todos_legend_html=todos_legend_html,
             duplicate_ids_json=json.dumps(list(duplicate_ids)),
+            node_timestamps_json=json.dumps(node_timestamps),
+            min_date=min_date,
+            max_date=max_date,
         )
 
         result = {

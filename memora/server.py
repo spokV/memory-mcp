@@ -1740,6 +1740,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         mcp.settings.host = args.host
         mcp.settings.port = args.port
 
+        # Pre-warm database connection (triggers cloud sync if needed)
+        # This prevents "connection failed" on first MCP connection
+        try:
+            import sys
+            print("Initializing database...", file=sys.stderr)
+            conn = connect()
+            conn.close()
+            print("Database ready.", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Database pre-warm failed: {e}", file=sys.stderr)
+
         # Start graph visualization server unless disabled
         if not args.no_graph:
             start_graph_server(args.host, args.graph_port)
