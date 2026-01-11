@@ -417,35 +417,30 @@ def format_memory_content(
 
     # Git commit - format as a log entry (will be appended to commits log)
     if capture_type == "git-commit":
-        import re
         import subprocess
 
-        # Try to get the actual commit hash
         commit_hash = ""
+        commit_msg = ""
+
+        # Get commit hash and message directly from git (most reliable)
         try:
+            # Get short hash
             result = subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, cwd=cwd, timeout=5
             )
             if result.returncode == 0:
                 commit_hash = result.stdout.strip()
+
+            # Get commit message (first line only for log brevity)
+            result = subprocess.run(
+                ["git", "log", "-1", "--pretty=%s"],
+                capture_output=True, text=True, cwd=cwd, timeout=5
+            )
+            if result.returncode == 0:
+                commit_msg = result.stdout.strip()
         except Exception:
             pass
-
-        # Extract commit message from command
-        commit_msg = ""
-        if "-m" in command:
-            # Try HEREDOC format first: -m "$(cat <<'EOF' ... EOF )"
-            heredoc_match = re.search(r"-m\s+\"\$\(cat\s+<<['\"]?EOF['\"]?\s*\n(.+?)\n\s*EOF", command, re.DOTALL)
-            if heredoc_match:
-                commit_msg = heredoc_match.group(1).strip()
-                # Remove Co-Authored-By line for cleaner display
-                commit_msg = re.sub(r'\n\s*Co-Authored-By:.*$', '', commit_msg, flags=re.MULTILINE).strip()
-            else:
-                # Try quoted message: -m "message" or -m 'message'
-                match = re.search(r'-m\s+["\'](.+?)["\']', command)
-                if match:
-                    commit_msg = match.group(1)
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -454,8 +449,10 @@ def format_memory_content(
             return f"- `{commit_hash}` [{timestamp}] {commit_msg}"
         elif commit_msg:
             return f"- [{timestamp}] {commit_msg}"
+        elif commit_hash:
+            return f"- `{commit_hash}` [{timestamp}] (message not captured)"
         else:
-            return f"- [{timestamp}] (commit message not captured)"
+            return f"- [{timestamp}] (commit not captured)"
 
     # Test results
     if capture_type == "test-result":
