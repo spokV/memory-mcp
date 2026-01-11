@@ -60,7 +60,8 @@ div.vis-tooltip {
 #timeline-container {
     position: absolute;
     bottom: 50px;
-    left: 220px;
+    left: 50%;
+    transform: translateX(-50%);
     width: 280px;
     background: rgba(22,27,34,0.95);
     padding: 10px 14px;
