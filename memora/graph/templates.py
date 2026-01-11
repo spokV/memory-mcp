@@ -55,6 +55,96 @@ div.vis-tooltip {
 #resize-handle { width: 6px; background: #30363d; cursor: ew-resize; display: none; }
 #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
 #resize-handle.active { display: block; }
+
+/* Panel tabs */
+#panel-tabs { display: flex; gap: 4px; background: #0d1117; padding: 6px; border-radius: 8px; margin-bottom: 16px; }
+#panel-tabs .tab { padding: 8px 20px; cursor: pointer; color: #8b949e; border-radius: 6px; font-size: 13px; font-weight: 500; transition: all 0.15s ease; }
+#panel-tabs .tab.active { color: #fff; background: linear-gradient(135deg, #238636 0%, #2ea043 100%); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+#panel-tabs .tab:not(.active):hover { color: #c9d1d9; background: #21262d; }
+#tab-detail, #tab-timeline { display: none; }
+#tab-detail.active, #tab-timeline.active { display: block; }
+#timeline-list { max-height: calc(100vh - 120px); overflow-y: auto; }
+#timeline-list .memory-item { padding: 10px; border-bottom: 1px solid #30363d; cursor: pointer; display: flex; flex-direction: column; }
+#timeline-list .memory-item:hover { background: #21262d; }
+#timeline-list .memory-item.selected { background: #30363d; }
+#timeline-list .memory-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#timeline-list .memory-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#timeline-list .memory-title .id { color: #58a6ff; font-weight: 500; font-size: 12px; }
+#timeline-list .memory-title .headline { color: #c9d1d9; font-size: 12px; margin-left: 6px; }
+#timeline-list .memory-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#timeline-list .memory-date { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+#timeline-list .details-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; }
+#timeline-list .details-btn:hover { background: #30363d; color: #c9d1d9; }
+#timeline-list .memory-preview { color: #8b949e; font-size: 11px; line-height: 1.4; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Timeline slider */
+#timeline-container {
+    position: absolute;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 280px;
+    background: rgba(22,27,34,0.95);
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    z-index: 100;
+}
+#timeline-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: #8b949e;
+}
+#timeline-label .title { color: #58a6ff; font-weight: 500; }
+#timeline-label .date-range { color: #c9d1d9; }
+#timeline-slider {
+    width: 100%;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: linear-gradient(to right, #238636 0%, #58a6ff 100%, #30363d 100%);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+}
+#timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #58a6ff;
+    border-radius: 50%;
+    cursor: grab;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: transform 0.1s ease;
+}
+#timeline-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    background: #79b8ff;
+}
+#timeline-slider::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+}
+#timeline-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: #58a6ff;
+    border-radius: 50%;
+    cursor: grab;
+    border: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#timeline-dates {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 10px;
+    color: #6e7681;
+}
 #legend {
     position: absolute;
     top: 10px;
@@ -109,6 +199,7 @@ div.vis-tooltip {
 .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
 .subsection-item.selected { color: #ffffff; }
 #help { position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }
+#version { position: absolute; top: 10px; right: 470px; background: rgba(22,27,34,0.8); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #6e7681; z-index: 50; }
 #node-tooltip { position: absolute; display: none; background: rgba(22,27,34,0.95); border: 1px solid #30363d; padding: 8px 12px; border-radius: 6px; pointer-events: none; z-index: 1000; max-width: 300px; }
 #node-tooltip .tooltip-id { color: #58a6ff; font-size: 12px; font-weight: bold; }
 #node-tooltip .tooltip-desc { color: #8b949e; font-size: 10px; margin-top: 4px; }
@@ -144,9 +235,6 @@ mermaid.initialize({
 // Set up marked.js with custom renderer for mermaid
 marked.use({
     renderer: {
-        link: function(token) {
-            return '<a href="' + token.href + '" target="_blank">' + token.text + '</a>';
-        },
         code: function(code, infostring, escaped) {
             var language = (infostring || '').trim().split(' ')[0];
             if (language === 'mermaid') {
@@ -198,15 +286,24 @@ function renderImages(metadata) {
 function renderIssueBadges(metadata) {
     if (!metadata || metadata.type !== 'issue') return '';
     var status = metadata.status || 'open';
+    var closedReason = metadata.closed_reason || '';
     var severity = metadata.severity || 'unknown';
     var component = metadata.component || '';
     var commit = metadata.commit || '';
 
-    var statusColors = {open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'};
+    // Build combined status key for color lookup
+    var statusKey = status;
+    var statusDisplay = status.toUpperCase();
+    if (status === 'closed' && closedReason) {
+        statusKey = 'closed:' + closedReason;
+        statusDisplay = 'CLOSED (' + closedReason.toUpperCase().replace('_', ' ') + ')';
+    }
+
+    var statusColors = {open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'};
     var severityColors = {critical: '#f85149', major: '#d29922', minor: '#8b949e'};
 
     var html = '<div class="issue-badges">';
-    html += '<span class="issue-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="issue-badge" style="background:' + (statusColors[statusKey] || '#8b949e') + '">' + statusDisplay + '</span>';
     html += '<span class="issue-badge" style="background:' + (severityColors[severity] || '#8b949e') + '">' + severity + '</span>';
     if (component) html += '<span class="issue-badge component">' + component + '</span>';
     if (commit) html += '<span class="issue-badge commit">#' + commit.slice(0,7) + '</span>';
@@ -217,14 +314,23 @@ function renderIssueBadges(metadata) {
 function renderTodoBadges(metadata) {
     if (!metadata || metadata.type !== 'todo') return '';
     var status = metadata.status || 'open';
+    var closedReason = metadata.closed_reason || '';
     var priority = metadata.priority || 'medium';
     var category = metadata.category || '';
 
-    var statusColors = {open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'};
+    // Build combined status key for color lookup
+    var statusKey = status;
+    var statusDisplay = status.toUpperCase();
+    if (status === 'closed' && closedReason) {
+        statusKey = 'closed:' + closedReason;
+        statusDisplay = 'CLOSED (' + closedReason.toUpperCase().replace('_', ' ') + ')';
+    }
+
+    var statusColors = {open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'};
     var priorityColors = {high: '#f85149', medium: '#d29922', low: '#8b949e'};
 
     var html = '<div class="todo-badges">';
-    html += '<span class="todo-badge" style="background:' + (statusColors[status] || '#8b949e') + '">' + status.toUpperCase() + '</span>';
+    html += '<span class="todo-badge" style="background:' + (statusColors[statusKey] || '#8b949e') + '">' + statusDisplay + '</span>';
     html += '<span class="todo-badge" style="background:' + (priorityColors[priority] || '#8b949e') + '">' + priority + '</span>';
     if (category) html += '<span class="todo-badge category">' + category + '</span>';
     html += '</div>';
@@ -319,6 +425,11 @@ function getConnectedNodes(nodeId, hops) {
 }
 
 function focusOnNode(nodeId) {
+    // Reset timeline when focusing on a node to avoid conflicting states
+    if (timelineActive) {
+        resetTimeline();
+    }
+
     focusedNodeId = nodeId;
     var hop1 = getConnectedNodes(nodeId, 1);  // Direct connections
     var hop2 = getConnectedNodes(nodeId, 2);  // Includes hop1 + indirect
@@ -412,7 +523,10 @@ resizeHandle.addEventListener('mousedown', function(e) {
 document.addEventListener('mousemove', function(e) {
     if (!isResizing) return;
     var newWidth = window.innerWidth - e.clientX;
-    if (newWidth >= 200 && newWidth <= 800) panel.style.width = newWidth + 'px';
+    if (newWidth >= 200 && newWidth <= 800) {
+        panel.style.width = newWidth + 'px';
+        updateTimelinePosition();
+    }
 });
 
 document.addEventListener('mouseup', function() {
@@ -420,6 +534,155 @@ document.addEventListener('mouseup', function() {
     resizeHandle.classList.remove('dragging');
     document.body.style.cursor = '';
 });
+"""
+
+# JavaScript for timeline slider
+TIMELINE_JS = """
+var timelineData = null;
+var timelineActive = false;
+
+function initTimeline(nodeTimestamps, minDate, maxDate) {
+    if (!nodeTimestamps || Object.keys(nodeTimestamps).length === 0) return;
+
+    timelineData = {
+        timestamps: nodeTimestamps,
+        minTime: new Date(minDate).getTime(),
+        maxTime: new Date(maxDate).getTime(),
+        sortedNodes: Object.entries(nodeTimestamps)
+            .map(([id, ts]) => ({ id: parseInt(id), time: new Date(ts).getTime() }))
+            .sort((a, b) => a.time - b.time)
+    };
+
+    // Set date labels
+    document.getElementById('timeline-min-date').textContent = formatDate(minDate);
+    document.getElementById('timeline-max-date').textContent = formatDate(maxDate);
+
+    // Initialize slider to 100% (show all)
+    var slider = document.getElementById('timeline-slider');
+    slider.value = 100;
+    updateTimelineProgress(100);
+
+    // Show container
+    document.getElementById('timeline-container').style.display = 'block';
+}
+
+function formatDate(dateStr) {
+    var d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function updateTimelineProgress(percent) {
+    var slider = document.getElementById('timeline-slider');
+    // Update slider track: colored portion (green->blue gradient) + gray remainder
+    slider.style.background = 'linear-gradient(to right, #238636 0%, #58a6ff ' + percent + '%, #30363d ' + percent + '%)';
+}
+
+function onTimelineChange(value) {
+    if (!timelineData) return;
+
+    // Exit focus mode when using timeline to avoid conflicting states
+    exitFocusMode();
+
+    timelineActive = true;
+    var percent = parseInt(value);
+    updateTimelineProgress(percent);
+
+    // Calculate cutoff time based on slider position
+    var timeRange = timelineData.maxTime - timelineData.minTime;
+    var cutoffTime = timelineData.minTime + (timeRange * percent / 100);
+
+    // Update date display
+    var cutoffDate = new Date(cutoffTime);
+    document.getElementById('timeline-current').textContent =
+        'Showing: ' + formatDate(cutoffDate.toISOString());
+
+    // Get node IDs up to cutoff
+    // Nodes without timestamps are always visible (they predate timestamp tracking)
+    var visibleIds = new Set();
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    for (var n of sourceNodes) {
+        if (!timelineData.timestamps[n.id]) {
+            // No timestamp = always visible
+            visibleIds.add(n.id);
+        }
+    }
+    for (var node of timelineData.sortedNodes) {
+        if (node.time <= cutoffTime) {
+            visibleIds.add(node.id);
+        }
+    }
+
+    // Update node visibility with fade effect
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var nodeUpdates = sourceNodes.map(function(n) {
+        if (visibleIds.has(n.id)) {
+            // Visible - full opacity, highlight newer ones
+            var nodeTime = timelineData.timestamps[n.id] ? new Date(timelineData.timestamps[n.id]).getTime() : 0;
+            var recency = (nodeTime - timelineData.minTime) / timeRange;
+            // Highlight recently revealed nodes with a glow
+            var isRecent = Math.abs(nodeTime - cutoffTime) < (timeRange * 0.05);
+            return {
+                id: n.id,
+                opacity: 1,
+                borderWidth: isRecent ? 4 : (n.borderWidth || 2),
+                color: isRecent ? { background: n.color.background || n.color, border: '#58a6ff' } : n.color
+            };
+        } else {
+            // Hidden - very faded
+            return { id: n.id, opacity: 0.08 };
+        }
+    });
+
+    // Update edges - only show edges between visible nodes
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+    var edgeUpdates = sourceEdges.map(function(e) {
+        if (visibleIds.has(e.from) && visibleIds.has(e.to)) {
+            return { id: e.id, hidden: false, color: e.color || 'rgba(48,54,61,0.6)' };
+        } else {
+            return { id: e.id, hidden: true };
+        }
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
+
+function updateTimelinePosition() {
+    var timeline = document.getElementById('timeline-container');
+    if (!timeline) return;
+    var panel = document.getElementById('panel');
+    var panelOpen = panel && panel.classList.contains('active');
+    if (panelOpen) {
+        var panelWidth = panel.offsetWidth || 450;
+        timeline.style.left = 'calc(50% - ' + (panelWidth / 2) + 'px)';
+    } else {
+        timeline.style.left = '50%';
+    }
+}
+
+function resetTimeline() {
+    if (!timelineData) return;
+
+    timelineActive = false;
+    var slider = document.getElementById('timeline-slider');
+    slider.value = 100;
+    updateTimelineProgress(100);
+    document.getElementById('timeline-current').textContent = 'Drag to filter by time';
+
+    // Restore all nodes
+    var sourceNodes = typeof graphData !== 'undefined' ? graphData.nodes : allNodes;
+    var sourceEdges = typeof graphData !== 'undefined' ? graphData.edges : allEdges;
+
+    var nodeUpdates = sourceNodes.map(function(n) {
+        return { id: n.id, opacity: 1, borderWidth: n.borderWidth || 2, color: n.color };
+    });
+    var edgeUpdates = sourceEdges.map(function(e) {
+        return { id: e.id, hidden: false, color: e.color || 'rgba(48,54,61,0.6)' };
+    });
+
+    nodes.update(nodeUpdates);
+    edges.update(edgeUpdates);
+}
 """
 
 # JavaScript for custom tooltip
@@ -446,21 +709,144 @@ function hideNodeTooltip() {
 # JavaScript for panel display
 PANEL_JS = """
 var currentPanelMemoryId = null;
+var currentTab = 'detail';
+
+function switchTab(tabName) {
+    currentTab = tabName;
+    document.querySelectorAll('#panel-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelector('#panel-tabs .tab[onclick*="' + tabName + '"]').classList.add('active');
+    document.getElementById('tab-detail').classList.toggle('active', tabName === 'detail');
+    document.getElementById('tab-timeline').classList.toggle('active', tabName === 'timeline');
+    if (tabName === 'timeline') {
+        populateTimelineList();
+    }
+}
+
+function populateTimelineList() {
+    // Check if memoriesData exists (static template) or fetch from API (SPA)
+    if (typeof memoriesData !== 'undefined') {
+        renderTimelineList(Object.values(memoriesData));
+    } else {
+        // SPA mode - fetch from API
+        document.getElementById('timeline-list').innerHTML = '<div style="padding:20px;color:#8b949e;">Loading...</div>';
+        fetch('/api/memories')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.memories) {
+                    renderTimelineList(data.memories);
+                }
+            })
+            .catch(function(e) {
+                document.getElementById('timeline-list').innerHTML = '<div style="padding:20px;color:#f85149;">Error loading memories</div>';
+            });
+    }
+}
+
+function renderTimelineList(memories) {
+    memories.sort(function(a, b) {
+        return new Date(b.created) - new Date(a.created);
+    });
+    var html = memories.map(function(mem) {
+        var headline = getMemoryHeadline(mem.content);
+        var preview = getMemoryPreview(mem.content);
+        var selectedClass = (currentPanelMemoryId === mem.id) ? ' selected' : '';
+        return '<div class="memory-item' + selectedClass + '" data-id="' + mem.id + '" onclick="highlightMemoryInGraph(' + mem.id + ')">' +
+            '<div class="memory-header">' +
+                '<div class="memory-title"><span class="id">#' + mem.id + '</span><span class="headline">' + escapeHtmlText(headline) + '</span></div>' +
+                '<div class="memory-actions">' +
+                    '<span class="memory-date">' + mem.created + '</span>' +
+                    '<button class="details-btn" onclick="showMemoryDetails(' + mem.id + '); event.stopPropagation();">Details</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="memory-preview">' + escapeHtmlText(preview) + '</div>' +
+        '</div>';
+    }).join('');
+    document.getElementById('timeline-list').innerHTML = html || '<div style="padding:20px;color:#8b949e;">No memories</div>';
+
+    // Scroll selected item into view
+    var selected = document.querySelector('#timeline-list .memory-item.selected');
+    if (selected) selected.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function highlightMemoryInGraph(memId) {
+    memId = parseInt(memId, 10);
+    // Focus on the node in the graph (highlights connections)
+    if (typeof focusOnNode !== 'undefined') {
+        focusOnNode(memId);
+    }
+    // Update selected state in timeline
+    document.querySelectorAll('#timeline-list .memory-item').forEach(function(el) {
+        el.classList.toggle('selected', parseInt(el.dataset.id, 10) === memId);
+    });
+}
+
+function showMemoryDetails(memId) {
+    memId = parseInt(memId, 10);
+    // Switch to detail tab and show panel
+    switchTab('detail');
+    // Get memory data
+    if (typeof memoriesData !== 'undefined' && memoriesData[memId]) {
+        showPanel(memoriesData[memId]);
+    } else if (typeof memoryCache !== 'undefined' && memoryCache[memId]) {
+        showPanel(memoryCache[memId]);
+    } else {
+        fetch('/api/memories/' + memId)
+            .then(function(r) { return r.json(); })
+            .then(function(mem) {
+                if (!mem.error) {
+                    if (typeof memoryCache !== 'undefined') memoryCache[memId] = mem;
+                    showPanel(mem);
+                }
+            });
+    }
+}
+
+function getMemoryHeadline(content) {
+    var lines = content.split('\\n').filter(function(l) { return l.trim(); });
+    var first = lines[0] || '';
+    return first.replace(/^#+\\s*/, '').substring(0, 80);
+}
+
+function getMemoryPreview(content) {
+    var lines = content.split('\\n').filter(function(l) { return l.trim() && !l.match(/^#+/); });
+    return lines.slice(0, 2).join(' ').substring(0, 150);
+}
+
+function escapeHtmlText(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 function closePanel() {
     document.getElementById('panel').classList.remove('active');
     document.getElementById('resize-handle').classList.remove('active');
     currentPanelMemoryId = null;
     document.querySelectorAll('.subsection-item.selected, .section-item.selected').forEach(el => el.classList.remove('selected'));
+    updateTimelinePosition();
 }
 
 function showPanel(mem) {
     currentPanelMemoryId = mem.id;
+
+    // Ensure detail tab is active when showing a specific memory
+    if (currentTab !== 'detail') {
+        document.querySelectorAll('#panel-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelector('#panel-tabs .tab[onclick*="detail"]').classList.add('active');
+        document.getElementById('tab-detail').classList.add('active');
+        document.getElementById('tab-timeline').classList.remove('active');
+        currentTab = 'detail';
+    }
+
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
     // Show issue or TODO badges if applicable
     var badgesHtml = renderIssueBadges(mem.metadata) + renderTodoBadges(mem.metadata);
-    document.getElementById('panel-meta').innerHTML = badgesHtml + 'Created: ' + mem.created;
+    var metaHtml = badgesHtml + 'Created: ' + mem.created;
+    if (mem.updated) {
+        metaHtml += '<br>Updated: ' + mem.updated;
+    }
+    document.getElementById('panel-meta').innerHTML = metaHtml;
 
     document.getElementById('panel-tags').innerHTML = mem.tags.map(function(t) {
         return '<span class="tag" onclick="filterByTag(\\'' + t + '\\'); event.stopPropagation();">' + t + '</span>';
@@ -477,12 +863,20 @@ function showPanel(mem) {
     if (mem.metadata) {
         // Handle issues
         if (mem.metadata.type === 'issue' && mem.metadata.status) {
-            var issueEl = document.querySelector('.legend-item.issue-status[data-status="' + mem.metadata.status + '"]');
+            var statusKey = mem.metadata.status;
+            if (statusKey === 'closed' && mem.metadata.closed_reason) {
+                statusKey = 'closed:' + mem.metadata.closed_reason;
+            }
+            var issueEl = document.querySelector('.legend-item.issue-status[data-status="' + statusKey + '"]');
             if (issueEl) issueEl.classList.add('selected');
         }
         // Handle TODOs
         else if (mem.metadata.type === 'todo' && mem.metadata.status) {
-            var todoEl = document.querySelector('.legend-item.todo-status[data-todo-status="' + mem.metadata.status + '"]');
+            var statusKey = mem.metadata.status;
+            if (statusKey === 'closed' && mem.metadata.closed_reason) {
+                statusKey = 'closed:' + mem.metadata.closed_reason;
+            }
+            var todoEl = document.querySelector('.legend-item.todo-status[data-todo-status="' + statusKey + '"]');
             if (todoEl) todoEl.classList.add('selected');
         }
         // Handle regular memories with sections
@@ -507,6 +901,7 @@ function showPanel(mem) {
             }
         }
     }
+    updateTimelinePosition();
 }
 """
 
@@ -523,7 +918,7 @@ def get_spa_css() -> str:
 
 def get_full_js() -> str:
     """Get complete JavaScript for graph functionality."""
-    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, TOOLTIP_JS, PANEL_JS, RESIZE_JS])
+    return "\n".join([RENDER_JS, FILTER_JS, ISSUE_FILTER_JS, TODO_FILTER_JS, TOOLTIP_JS, PANEL_JS, RESIZE_JS, TIMELINE_JS])
 
 
 def build_static_html(
@@ -542,6 +937,10 @@ def build_static_html(
     issues_legend_html: str,
     todos_legend_html: str,
     duplicate_ids_json: str = "[]",
+    node_timestamps_json: str = "{}",
+    min_date: str = "",
+    max_date: str = "",
+    version: str = "",
 ) -> str:
     """Build complete static HTML for export."""
     css = get_full_css()
@@ -572,14 +971,36 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
     <div id="resize-handle"></div>
     <div id="panel">
         <span class="close" onclick="closePanel()">&times;</span>
-        <h2 id="panel-title">Memory #</h2>
-        <div class="meta" id="panel-meta"></div>
-        <div class="tags" id="panel-tags"></div>
-        <div class="content" id="panel-content"></div>
+        <div id="panel-tabs">
+            <span class="tab active" onclick="switchTab('detail')">Detail</span>
+            <span class="tab" onclick="switchTab('timeline')">Timeline</span>
+        </div>
+        <div id="tab-detail" class="active">
+            <h2 id="panel-title">Memory #</h2>
+            <div class="meta" id="panel-meta"></div>
+            <div class="tags" id="panel-tags"></div>
+            <div class="content" id="panel-content"></div>
+        </div>
+        <div id="tab-timeline">
+            <div id="timeline-list"></div>
+        </div>
     </div>
     <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}{duplicates_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b>{sections_html}</div>
-    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom</div>
+    <div id="timeline-container" style="display:none;">
+        <div id="timeline-label">
+            <span class="title">Timeline</span>
+            <span id="timeline-current" class="date-range">Drag to filter by time</span>
+            <span class="reset" onclick="resetTimeline()" style="cursor:pointer;color:#58a6ff;">Reset</span>
+        </div>
+        <input type="range" id="timeline-slider" min="0" max="100" value="100" oninput="onTimelineChange(this.value)">
+        <div id="timeline-dates">
+            <span id="timeline-min-date">Oldest</span>
+            <span id="timeline-max-date">Newest</span>
+        </div>
+    </div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Drag timeline to filter by date</div>
+    <div id="version">v{version}</div>
     <div id="node-tooltip"></div>
     <script>
         var memoriesData = {memories_json};
@@ -634,12 +1055,16 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
         network.on("blurNode", function() {{
             hideNodeTooltip();
         }});
+
+        // Initialize timeline
+        var nodeTimestamps = {node_timestamps_json};
+        initTimeline(nodeTimestamps, "{min_date}", "{max_date}");
     </script>
 </body>
 </html>'''
 
 
-def get_spa_html() -> str:
+def get_spa_html(version: str = "") -> str:
     """Get SPA HTML template for dynamic graph server."""
     css = get_spa_css()
     js = get_full_js()
@@ -659,15 +1084,37 @@ def get_spa_html() -> str:
     <div id="resize-handle"></div>
     <div id="panel">
         <span class="close" onclick="closePanel()">&times;</span>
-        <h2 id="panel-title">Memory #</h2>
-        <div class="meta" id="panel-meta"></div>
-        <div class="tags" id="panel-tags"></div>
-        <div class="content" id="panel-content"></div>
+        <div id="panel-tabs">
+            <span class="tab active" onclick="switchTab('detail')">Detail</span>
+            <span class="tab" onclick="switchTab('timeline')">Timeline</span>
+        </div>
+        <div id="tab-detail" class="active">
+            <h2 id="panel-title">Memory #</h2>
+            <div class="meta" id="panel-meta"></div>
+            <div class="tags" id="panel-tags"></div>
+            <div class="content" id="panel-content"></div>
+        </div>
+        <div id="tab-timeline">
+            <div id="timeline-list"></div>
+        </div>
     </div>
     <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div id="duplicates-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
+    <div id="timeline-container" style="display:none;">
+        <div id="timeline-label">
+            <span class="title">Timeline</span>
+            <span id="timeline-current" class="date-range">Drag to filter by time</span>
+            <span class="reset" onclick="resetTimeline()" style="cursor:pointer;color:#58a6ff;">Reset</span>
+        </div>
+        <input type="range" id="timeline-slider" min="0" max="100" value="100" oninput="onTimelineChange(this.value)">
+        <div id="timeline-dates">
+            <span id="timeline-min-date">Oldest</span>
+            <span id="timeline-max-date">Newest</span>
+        </div>
+    </div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
-    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search</div>
+    <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search (or #id) | Drag timeline</div>
+    <div id="version">v{version}</div>
     <div id="node-tooltip"></div>
     <script>
         var graphData = null;
@@ -706,7 +1153,7 @@ def get_spa_html() -> str:
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
                 issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
-                var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
+                var statusColors = {{open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
@@ -730,10 +1177,11 @@ def get_spa_html() -> str:
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
                 todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
-                var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
+                var todoStatusColors = {{open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
+                var todoStatusDisplay = {{open: 'Open', 'closed:complete': 'Closed (Complete)', 'closed:not_planned': 'Closed (Not Planned)'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
-                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    var displayName = todoStatusDisplay[status] || status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 // Add categories
@@ -834,6 +1282,11 @@ def get_spa_html() -> str:
             network.on('blurNode', function() {{
                 hideNodeTooltip();
             }});
+
+            // Initialize timeline if data is available
+            if (graphData.nodeTimestamps && graphData.minDate && graphData.maxDate) {{
+                initTimeline(graphData.nodeTimestamps, graphData.minDate, graphData.maxDate);
+            }}
         }}
 
         async function showMemoryAsync(nodeId) {{
@@ -852,12 +1305,20 @@ def get_spa_html() -> str:
         }}
 
         function searchMemories(query) {{
-            if (!query || query.length < 2) {{
+            if (!query || query.length < 1) {{
                 resetFilter();
                 return;
             }}
-            query = query.toLowerCase();
-            var matchingIds = graphData.nodes.filter(n => n.label.toLowerCase().includes(query)).map(n => n.id);
+            // Check if query is an ID (number or #number)
+            var idMatch = query.match(/^#?(\\d+)$/);
+            var matchingIds;
+            if (idMatch) {{
+                var searchId = parseInt(idMatch[1], 10);
+                matchingIds = graphData.nodes.filter(n => n.id === searchId).map(n => n.id);
+            }} else {{
+                query = query.toLowerCase();
+                matchingIds = graphData.nodes.filter(n => n.label.toLowerCase().includes(query)).map(n => n.id);
+            }}
             applyFilter(matchingIds);
         }}
 
@@ -878,7 +1339,7 @@ def get_spa_html() -> str:
             var issuesHtml = '';
             if (graphData.statusToNodes && Object.keys(graphData.statusToNodes).length > 0) {{
                 issuesHtml = '<div id="issues-legend"><b onclick="filterAllIssues()">Issues</b>';
-                var statusColors = {{open: '#ff7b72', in_progress: '#ffa657', resolved: '#7ee787', wontfix: '#8b949e'}};
+                var statusColors = {{open: '#ff7b72', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
                 for (var [status, nodeIds] of Object.entries(graphData.statusToNodes)) {{
                     var color = statusColors[status] || '#8b949e';
                     var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
@@ -900,10 +1361,11 @@ def get_spa_html() -> str:
             var todosHtml = '';
             if (graphData.todoStatusToNodes && Object.keys(graphData.todoStatusToNodes).length > 0) {{
                 todosHtml = '<div id="todos-legend"><b onclick="filterAllTodos()">TODOs</b>';
-                var todoStatusColors = {{open: '#58a6ff', in_progress: '#ffa657', completed: '#7ee787', blocked: '#f85149'}};
+                var todoStatusColors = {{open: '#58a6ff', 'closed:complete': '#7ee787', 'closed:not_planned': '#8b949e'}};
+                var todoStatusDisplay = {{open: 'Open', 'closed:complete': 'Closed (Complete)', 'closed:not_planned': 'Closed (Not Planned)'}};
                 for (var [status, nodeIds] of Object.entries(graphData.todoStatusToNodes)) {{
                     var color = todoStatusColors[status] || '#8b949e';
-                    var displayName = status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    var displayName = todoStatusDisplay[status] || status.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase());
                     todosHtml += '<div class="legend-item todo-status" data-todo-status="' + status + '" onclick="filterByTodoStatus(\\'' + status + '\\')"><span class="legend-color" style="background:' + color + '"></span>' + displayName + ' (' + nodeIds.length + ')</div>';
                 }}
                 if (graphData.todoCategoryToNodes && Object.keys(graphData.todoCategoryToNodes).length > 0) {{

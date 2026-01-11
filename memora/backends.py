@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
 RETRY_MAX_DELAY = 30.0  # seconds
+SYNC_CHECK_TTL = 30.0  # seconds - skip HEAD request if we checked recently
 
 # Transient error codes that should trigger retry
 TRANSIENT_ERROR_CODES = {
@@ -332,6 +333,9 @@ class CloudSQLiteBackend(StorageBackend):
         self._is_dirty = False
         self._last_hash = None
 
+        # TTL cache for sync checks (avoids redundant HEAD requests)
+        self._last_sync_check: float = 0.0
+
         logger.info(f"Initialized CloudSQLiteBackend: {cloud_url} -> {self.cache_path}")
 
     def _parse_s3_url(self, url: str) -> tuple[str, str]:
@@ -466,6 +470,12 @@ class CloudSQLiteBackend(StorageBackend):
         if not self.auto_sync:
             return
 
+        # Skip if we checked recently (within TTL)
+        now = time.time()
+        if now - self._last_sync_check < SYNC_CHECK_TTL and self.cache_path.exists():
+            logger.debug(f"Skipping sync check (TTL: {SYNC_CHECK_TTL}s)")
+            return
+
         with self.lock:
             try:
                 # Check if remote object exists and get metadata
@@ -502,6 +512,7 @@ class CloudSQLiteBackend(StorageBackend):
                             )
                             # Create local database without uploading
                             self._create_local_database_only()
+                        self._last_sync_check = time.time()
                         return
                     raise
 
@@ -513,6 +524,7 @@ class CloudSQLiteBackend(StorageBackend):
                 if local_etag == remote_etag and self.cache_path.exists():
                     logger.debug(f"Local cache is up to date (ETag: {remote_etag})")
                     self._last_hash = self._compute_hash()
+                    self._last_sync_check = time.time()
                     return
 
                 # Download from S3 with retry
@@ -542,9 +554,10 @@ class CloudSQLiteBackend(StorageBackend):
                 metadata["remote_modified"] = remote_modified.isoformat() if remote_modified else None
                 self._save_metadata(metadata)
 
-                # Update hash
+                # Update hash and sync check time
                 self._last_hash = self._compute_hash()
                 self._is_dirty = False
+                self._last_sync_check = time.time()
 
             except NoCredentialsError as e:
                 friendly_msg = _get_user_friendly_error(e, "syncing from cloud")

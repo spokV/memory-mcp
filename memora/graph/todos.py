@@ -3,11 +3,11 @@
 from typing import Any, Dict, List, Optional
 
 # Status colors for TODO nodes
+# open = blue, closed:complete = green, closed:not_planned = gray
 TODO_STATUS_COLORS = {
-    "open": "#58a6ff",        # Blue
-    "in_progress": "#ffa657", # Orange
-    "completed": "#7ee787",   # Green
-    "blocked": "#f85149",     # Red
+    "open": "#58a6ff",              # Blue
+    "closed:complete": "#7ee787",   # Green
+    "closed:not_planned": "#8b949e", # Gray
 }
 
 # Priority colors (used for border/accent)
@@ -26,10 +26,27 @@ def is_todo(metadata: Optional[Dict[str, Any]]) -> bool:
 
 
 def get_todo_status(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Get TODO status from metadata, or None if not a TODO."""
+    """Get TODO status from metadata, or None if not a TODO.
+
+    Returns combined status like 'open', 'closed:complete', or 'closed:not_planned'.
+    Also handles legacy statuses: completed -> closed:complete, blocked -> closed:not_planned
+    """
     if not is_todo(metadata):
         return None
-    return metadata.get("status", "open")
+    status = metadata.get("status", "open")
+
+    # Handle legacy statuses
+    if status == "completed":
+        return "closed:complete"
+    if status == "blocked":
+        return "closed:not_planned"
+    if status == "in_progress":
+        return "open"  # Map to open (active)
+
+    if status == "closed":
+        reason = metadata.get("closed_reason", "complete")
+        return f"closed:{reason}"
+    return status
 
 
 def get_todo_priority(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -110,11 +127,16 @@ def build_todo_legend_html(
 
     html_parts = ['<div id="todos-legend"><b>TODOs</b>']
 
-    # Status items
+    # Status items with display names
+    status_display = {
+        "open": "Open",
+        "closed:complete": "Closed (Complete)",
+        "closed:not_planned": "Closed (Not Planned)",
+    }
     for status, color in TODO_STATUS_COLORS.items():
         count = len(status_to_nodes.get(status, []))
         if count > 0:
-            display_name = status.replace("_", " ").title()
+            display_name = status_display.get(status, status.title())
             html_parts.append(
                 f'<div class="legend-item todo-status" data-todo-status="{status}" '
                 f'onclick="filterByTodoStatus(\'{status}\')">'
@@ -217,13 +239,22 @@ def get_todo_panel_html(metadata: Dict[str, Any]) -> str:
         return ""
 
     status = metadata.get("status", "open")
+    closed_reason = metadata.get("closed_reason")
     priority = metadata.get("priority", "medium")
     category = metadata.get("category", "")
 
-    status_color = TODO_STATUS_COLORS.get(status, "#8b949e")
+    # Build combined status key for color lookup
+    if status == "closed" and closed_reason:
+        status_key = f"closed:{closed_reason}"
+        status_display = f"CLOSED ({closed_reason.upper().replace('_', ' ')})"
+    else:
+        status_key = status
+        status_display = status.upper()
+
+    status_color = TODO_STATUS_COLORS.get(status_key, "#8b949e")
 
     html = f'''<div class="todo-badges">
-        <span class="todo-badge" style="background:{status_color}">{status.upper()}</span>
+        <span class="todo-badge" style="background:{status_color}">{status_display}</span>
         <span class="todo-badge priority-{priority}">{priority}</span>'''
 
     if category:

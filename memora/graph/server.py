@@ -5,6 +5,7 @@ import os
 import socket
 import sys
 import threading
+from importlib.metadata import version as get_version
 from typing import TYPE_CHECKING
 
 from starlette.requests import Request
@@ -15,19 +16,55 @@ from .data import export_graph_html, get_graph_data, get_memory_for_api
 from .templates import get_spa_html
 from ..storage import connect
 
+def _get_memora_version() -> str:
+    try:
+        return get_version("memora")
+    except Exception:
+        return ""
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 
-def _is_port_in_use(host: str, port: int) -> bool:
-    """Check if a port is already in use."""
+def _normalize_host_for_connect(host: str) -> str:
+    """Convert wildcard bind addresses to connectable localhost."""
+    if host in ("0.0.0.0", "::", ""):
+        return "127.0.0.1"
+    return host
+
+
+def _check_port_status(host: str, port: int) -> str:
+    """Check port status and identify what's running.
+
+    Returns:
+        "free" - port is available
+        "memora" - our graph server is running
+        "other" - something else is using the port
+    """
+    connect_host = _normalize_host_for_connect(host)
+
+    # First, quick check if port is in use
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.settimeout(1)
         try:
-            s.bind((host, port))
-            return False
-        except OSError:
-            return True
+            s.connect((connect_host, port))
+        except (OSError, socket.timeout):
+            return "free"
+
+    # Port is in use - verify it's our graph server
+    try:
+        import urllib.request
+        url = f"http://{connect_host}:{port}/api/graph"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = resp.read().decode()
+            # Check for our specific response structure
+            if '"nodes"' in data or '"count"' in data:
+                return "memora"
+    except Exception:
+        pass
+
+    return "other"
 
 
 def register_graph_routes(mcp: "FastMCP") -> None:
@@ -63,14 +100,18 @@ def start_graph_server(host: str, port: int) -> None:
         host: Host to bind to
         port: Port to bind to
     """
-    if _is_port_in_use(host, port):
-        print(f"Graph server port {port} already in use, skipping", file=sys.stderr)
+    port_status = _check_port_status(host, port)
+    if port_status == "memora":
+        print(f"Graph server already running on port {port}, reusing existing", file=sys.stderr)
+        return
+    elif port_status == "other":
+        print(f"Port {port} is in use by another service, skipping graph server", file=sys.stderr)
         return
 
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    GRAPH_HTML = get_spa_html()
+    GRAPH_HTML = get_spa_html(version=_get_memora_version())
 
     async def graph_handler(request: Request):
         """Serve the static graph SPA."""
@@ -97,30 +138,56 @@ def start_graph_server(host: str, port: int) -> None:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_memories_list(request: Request):
+        """API endpoint: Get all memories for timeline."""
+        try:
+            conn = connect()
+            rows = conn.execute(
+                """SELECT id, content, created_at, updated_at, tags, metadata
+                   FROM memories ORDER BY created_at DESC"""
+            ).fetchall()
+            conn.close()
+            memories = []
+            for row in rows:
+                import json
+                memories.append({
+                    "id": row["id"],
+                    "content": row["content"],
+                    "created": row["created_at"].split(" ")[0] if row["created_at"] else "",
+                    "updated": row["updated_at"].split(" ")[0] if row["updated_at"] else None,
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {}
+                })
+            return JSONResponse({"memories": memories})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def graph_events(request: Request):
         """SSE endpoint for graph update notifications."""
         async def event_generator():
             last_count = None
-            last_updated = None
+            last_modified = None
             while True:
                 try:
                     conn = connect()
                     row = conn.execute(
-                        "SELECT COUNT(*) as cnt, MAX(created_at) as latest FROM memories"
+                        """SELECT COUNT(*) as cnt,
+                           MAX(COALESCE(updated_at, created_at)) as latest
+                           FROM memories"""
                     ).fetchone()
                     conn.close()
 
                     current_count = row["cnt"] if row else 0
-                    current_updated = row["latest"] if row else None
+                    current_modified = row["latest"] if row else None
 
-                    # Detect changes
+                    # Detect changes (create, update, or delete)
                     if last_count is not None and (
-                        current_count != last_count or current_updated != last_updated
+                        current_count != last_count or current_modified != last_modified
                     ):
                         yield {"event": "graph-updated", "data": "refresh"}
 
                     last_count = current_count
-                    last_updated = current_updated
+                    last_modified = current_modified
                 except Exception:
                     pass
 
@@ -165,6 +232,7 @@ def start_graph_server(host: str, port: int) -> None:
             Route("/graph", graph_handler),
             Route("/api/graph", api_graph),
             Route("/api/events", graph_events),
+            Route("/api/memories", api_memories_list),
             Route("/api/memories/{id:int}", api_memory),
             Route("/r2/{path:path}", r2_image_proxy),
         ]

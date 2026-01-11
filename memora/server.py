@@ -629,6 +629,7 @@ async def memory_create(
 async def memory_create_issue(
     content: str,
     status: str = "open",
+    closed_reason: Optional[str] = None,
     severity: str = "minor",
     component: Optional[str] = None,
     category: Optional[str] = None,
@@ -637,7 +638,8 @@ async def memory_create_issue(
 
     Args:
         content: Description of the issue
-        status: Issue status - "open" (default), "in_progress", "resolved", "wontfix"
+        status: Issue status - "open" (default) or "closed"
+        closed_reason: If closed, the reason - "complete" or "not_planned"
         severity: Issue severity - "critical", "major", "minor" (default)
         component: Component/area affected (e.g., "graph", "storage", "api")
         category: Issue category (e.g., "bug", "enhancement", "performance")
@@ -646,9 +648,17 @@ async def memory_create_issue(
         Created issue memory with auto-assigned tag "memora/issues"
     """
     # Validate status
-    valid_statuses = {"open", "in_progress", "resolved", "wontfix"}
+    valid_statuses = {"open", "closed"}
     if status not in valid_statuses:
         return {"error": "invalid_status", "message": f"Status must be one of: {', '.join(valid_statuses)}"}
+
+    # Validate closed_reason if status is closed
+    if status == "closed":
+        valid_reasons = {"complete", "not_planned"}
+        if not closed_reason:
+            return {"error": "missing_closed_reason", "message": "closed_reason required when status is 'closed'"}
+        if closed_reason not in valid_reasons:
+            return {"error": "invalid_closed_reason", "message": f"closed_reason must be one of: {', '.join(valid_reasons)}"}
 
     # Validate severity
     valid_severities = {"critical", "major", "minor"}
@@ -661,6 +671,8 @@ async def memory_create_issue(
         "status": status,
         "severity": severity,
     }
+    if closed_reason:
+        metadata["closed_reason"] = closed_reason
     if component:
         metadata["component"] = component
     if category:
@@ -681,6 +693,7 @@ async def memory_create_issue(
 async def memory_create_todo(
     content: str,
     status: str = "open",
+    closed_reason: Optional[str] = None,
     priority: str = "medium",
     category: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -688,7 +701,8 @@ async def memory_create_todo(
 
     Args:
         content: Description of the task
-        status: Task status - "open" (default), "in_progress", "completed", "blocked"
+        status: Task status - "open" (default) or "closed"
+        closed_reason: If closed, the reason - "complete" or "not_planned"
         priority: Task priority - "high", "medium" (default), "low"
         category: Task category (e.g., "cloud-backend", "graph-visualization", "docs")
 
@@ -696,9 +710,17 @@ async def memory_create_todo(
         Created TODO memory with auto-assigned tag "memora/todos"
     """
     # Validate status
-    valid_statuses = {"open", "in_progress", "completed", "blocked"}
+    valid_statuses = {"open", "closed"}
     if status not in valid_statuses:
         return {"error": "invalid_status", "message": f"Status must be one of: {', '.join(valid_statuses)}"}
+
+    # Validate closed_reason if status is closed
+    if status == "closed":
+        valid_reasons = {"complete", "not_planned"}
+        if not closed_reason:
+            return {"error": "missing_closed_reason", "message": "closed_reason required when status is 'closed'"}
+        if closed_reason not in valid_reasons:
+            return {"error": "invalid_closed_reason", "message": f"closed_reason must be one of: {', '.join(valid_reasons)}"}
 
     # Validate priority
     valid_priorities = {"high", "medium", "low"}
@@ -711,6 +733,8 @@ async def memory_create_todo(
         "status": status,
         "priority": priority,
     }
+    if closed_reason:
+        metadata["closed_reason"] = closed_reason
     if category:
         metadata["category"] = category
 
@@ -1715,6 +1739,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         # Default: start server
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+
+        # Pre-warm database connection (triggers cloud sync if needed)
+        # This prevents "connection failed" on first MCP connection
+        try:
+            import sys
+            print("Initializing database...", file=sys.stderr)
+            conn = connect()
+            conn.close()
+            print("Database ready.", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Database pre-warm failed: {e}", file=sys.stderr)
 
         # Start graph visualization server unless disabled
         if not args.no_graph:
