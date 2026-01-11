@@ -1,12 +1,8 @@
-<img src="media/memora_new.gif" width="60" align="left" alt="Memora Logo">
-
-# Memora
+<h1><img src="media/memora_new.gif" width="36" alt="Memora Logo">&nbsp;Memora</h1>
 
 [![Version](https://img.shields.io/github/v/tag/agentic-mcp-tools/memora?label=version&color=blue)](https://github.com/agentic-mcp-tools/memora/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/agentic-mcp-tools/memora?style=social)](https://github.com/agentic-mcp-tools/memora/stargazers)
-
-<br clear="left">
 
 A lightweight Model Context Protocol (MCP) server that persists shared memories in SQLite. Compatible with Claude Code, Codex CLI, and other MCP-aware clients.
 
