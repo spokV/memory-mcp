@@ -415,28 +415,47 @@ def format_memory_content(
     command = tool_input.get("command", "")
     project = Path(cwd).name if cwd else "unknown"
 
-    # Git commit - extract commit message
+    # Git commit - format as a log entry (will be appended to commits log)
     if capture_type == "git-commit":
+        import re
+        import subprocess
+
+        # Try to get the actual commit hash
+        commit_hash = ""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, cwd=cwd, timeout=5
+            )
+            if result.returncode == 0:
+                commit_hash = result.stdout.strip()
+        except Exception:
+            pass
+
         # Extract commit message from command
         commit_msg = ""
         if "-m" in command:
-            # Try to extract message after -m
-            import re
-            match = re.search(r'-m\s+["\'](.+?)["\']', command)
-            if match:
-                commit_msg = match.group(1)
+            # Try HEREDOC format first: -m "$(cat <<'EOF' ... EOF )"
+            heredoc_match = re.search(r"-m\s+\"\$\(cat\s+<<['\"]?EOF['\"]?\s*\n(.+?)\n\s*EOF", command, re.DOTALL)
+            if heredoc_match:
+                commit_msg = heredoc_match.group(1).strip()
+                # Remove Co-Authored-By line for cleaner display
+                commit_msg = re.sub(r'\n\s*Co-Authored-By:.*$', '', commit_msg, flags=re.MULTILINE).strip()
             else:
-                # Try without quotes
-                match = re.search(r'-m\s+(\S+)', command)
+                # Try quoted message: -m "message" or -m 'message'
+                match = re.search(r'-m\s+["\'](.+?)["\']', command)
                 if match:
                     commit_msg = match.group(1)
 
-        lines = ["Git Commit", ""]
-        lines.append(f"**Project:** {project}")
-        if commit_msg:
-            lines.append(f"\n**Message:** {commit_msg}")
-        lines.append(f"\n**Command:** `{command[:200]}`")
-        return "\n".join(lines)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        # Format as a single log entry line
+        if commit_hash and commit_msg:
+            return f"- `{commit_hash}` [{timestamp}] {commit_msg}"
+        elif commit_msg:
+            return f"- [{timestamp}] {commit_msg}"
+        else:
+            return f"- [{timestamp}] (commit message not captured)"
 
     # Test results
     if capture_type == "test-result":
@@ -649,6 +668,79 @@ def get_memory_type_config(capture_type: str, tool_result: dict) -> dict:
     }
 
 
+def _handle_git_commit_log(
+    storage,
+    conn,
+    commit_entry: str,
+    project: str,
+    cwd: str,
+    session_id: str,
+) -> tuple[Optional[dict], str]:
+    """Handle git commits by maintaining a single log memory per project.
+
+    Instead of creating individual memories for each commit, maintains a
+    running log with timestamps and commit IDs.
+    """
+    try:
+        # Search for existing git commits log for this project
+        results = storage.list_memories(
+            conn,
+            metadata_filters={"capture_type": "git-commits-log", "project": project},
+            limit=1,
+        )
+
+        if results:
+            # Append to existing log
+            existing = results[0]
+            existing_content = existing.get("content", "")
+            updated_content = f"{existing_content}\n{commit_entry}"
+
+            storage.update_memory(
+                conn,
+                memory_id=existing["id"],
+                content=updated_content,
+            )
+            conn.close()
+
+            try:
+                storage.sync_to_cloud()
+            except Exception:
+                pass
+
+            return existing, "updated"
+
+        # Create new commits log
+        content = f"## Git Commits: {project}\n\n{commit_entry}"
+        metadata = {
+            "type": "auto-capture",
+            "capture_type": "git-commits-log",
+            "project": project,
+            "cwd": cwd,
+            "session_id": session_id,
+            "section": project,
+            "subsection": "commits",
+        }
+        tags = ["memora/auto-capture", "memora/auto-capture/git-commits"]
+
+        memory = storage.add_memory(
+            conn,
+            content=content,
+            metadata=metadata,
+            tags=tags,
+        )
+        conn.close()
+
+        try:
+            storage.sync_to_cloud()
+        except Exception:
+            pass
+
+        return memory, "created"
+
+    except Exception:
+        return None, "error"
+
+
 def find_or_create_memory(
     storage,
     content: str,
@@ -671,6 +763,10 @@ def find_or_create_memory(
 
         # Get memory type configuration
         type_config = get_memory_type_config(capture_type, tool_result)
+
+        # Special handling for git commits - maintain a single log per project
+        if capture_type == "git-commit":
+            return _handle_git_commit_log(storage, conn, content, project, cwd, session_id)
 
         # First, try to find existing memory to update
         file_path = tool_input.get("file_path", "")
