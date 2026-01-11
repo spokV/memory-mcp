@@ -230,6 +230,30 @@ Use different ports on different machines to avoid conflicts when forwarding mul
 
 To disable: add `"--no-graph"` to args in your MCP config.
 
+### Graph UI Features
+
+The graph visualization includes an interactive right panel with two tabs:
+
+**Detail Tab:**
+- View full memory content, metadata, and tags
+- See related memories with similarity scores
+- Mermaid diagram rendering for code blocks
+- Auto-resized image thumbnails
+
+**Timeline Tab:**
+- Browse all memories in reverse chronological order
+- Each row shows: `#ID - Title` with date badge and Details button
+- Click a memory row to highlight it and its connections in the graph
+- Click "Details" to open the full memory view
+- Selected memory is highlighted with grey background
+- Auto-scrolls to keep selected memory visible
+
+**Additional UI:**
+- Version badge in top right corner
+- Time slider for filtering memories by date range
+- Tag/section dropdown filters
+- Zoom and pan controls
+
 ## LLM Deduplication
 
 Find and merge duplicate memories using AI-powered semantic comparison:
