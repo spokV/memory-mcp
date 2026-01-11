@@ -1,4 +1,4 @@
-<img src="media/memora.gif" width="60" align="left" alt="Memora Demo">
+<img src="media/memora_new.gif" width="60" align="left" alt="Memora Logo">
 
 # Memora
 
