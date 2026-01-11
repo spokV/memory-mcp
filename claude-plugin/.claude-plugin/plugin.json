@@ -1,0 +1,5 @@
+{
+  "name": "memora-context",
+  "version": "0.1.0",
+  "description": "Inject relevant memories from Memora at session start"
+}
