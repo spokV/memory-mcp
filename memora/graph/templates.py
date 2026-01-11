@@ -64,12 +64,18 @@ div.vis-tooltip {
 #tab-detail, #tab-timeline { display: none; }
 #tab-detail.active, #tab-timeline.active { display: block; }
 #timeline-list { max-height: calc(100vh - 120px); overflow-y: auto; }
-#timeline-list .memory-item { padding: 10px; border-bottom: 1px solid #30363d; cursor: pointer; }
+#timeline-list .memory-item { padding: 10px; border-bottom: 1px solid #30363d; cursor: pointer; display: flex; flex-direction: column; }
 #timeline-list .memory-item:hover { background: #21262d; }
 #timeline-list .memory-item.selected { background: #30363d; }
-#timeline-list .memory-id { color: #58a6ff; font-weight: 500; font-size: 12px; }
-#timeline-list .memory-headline { color: #c9d1d9; font-size: 13px; margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#timeline-list .memory-preview { color: #8b949e; font-size: 11px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#timeline-list .memory-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#timeline-list .memory-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#timeline-list .memory-title .id { color: #58a6ff; font-weight: 500; font-size: 12px; }
+#timeline-list .memory-title .headline { color: #c9d1d9; font-size: 12px; margin-left: 6px; }
+#timeline-list .memory-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#timeline-list .memory-date { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+#timeline-list .details-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; }
+#timeline-list .details-btn:hover { background: #30363d; color: #c9d1d9; }
+#timeline-list .memory-preview { color: #8b949e; font-size: 11px; line-height: 1.4; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* Timeline slider */
 #timeline-container {
@@ -744,9 +750,14 @@ function renderTimelineList(memories) {
         var headline = getMemoryHeadline(mem.content);
         var preview = getMemoryPreview(mem.content);
         var selectedClass = (currentPanelMemoryId === mem.id) ? ' selected' : '';
-        return '<div class="memory-item' + selectedClass + '" data-id="' + mem.id + '" onclick="showMemoryFromList(' + mem.id + ')">' +
-            '<div class="memory-id">#' + mem.id + ' - ' + mem.created + '</div>' +
-            '<div class="memory-headline">' + escapeHtmlText(headline) + '</div>' +
+        return '<div class="memory-item' + selectedClass + '" data-id="' + mem.id + '" onclick="highlightMemoryInGraph(' + mem.id + ')">' +
+            '<div class="memory-header">' +
+                '<div class="memory-title"><span class="id">#' + mem.id + '</span><span class="headline">' + escapeHtmlText(headline) + '</span></div>' +
+                '<div class="memory-actions">' +
+                    '<span class="memory-date">' + mem.created + '</span>' +
+                    '<button class="details-btn" onclick="showMemoryDetails(' + mem.id + '); event.stopPropagation();">Details</button>' +
+                '</div>' +
+            '</div>' +
             '<div class="memory-preview">' + escapeHtmlText(preview) + '</div>' +
         '</div>';
     }).join('');
@@ -755,6 +766,39 @@ function renderTimelineList(memories) {
     // Scroll selected item into view
     var selected = document.querySelector('#timeline-list .memory-item.selected');
     if (selected) selected.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function highlightMemoryInGraph(memId) {
+    memId = parseInt(memId, 10);
+    // Focus on the node in the graph (highlights connections)
+    if (typeof focusOnNode !== 'undefined') {
+        focusOnNode(memId);
+    }
+    // Update selected state in timeline
+    document.querySelectorAll('#timeline-list .memory-item').forEach(function(el) {
+        el.classList.toggle('selected', parseInt(el.dataset.id, 10) === memId);
+    });
+}
+
+function showMemoryDetails(memId) {
+    memId = parseInt(memId, 10);
+    // Switch to detail tab and show panel
+    switchTab('detail');
+    // Get memory data
+    if (typeof memoriesData !== 'undefined' && memoriesData[memId]) {
+        showPanel(memoriesData[memId]);
+    } else if (typeof memoryCache !== 'undefined' && memoryCache[memId]) {
+        showPanel(memoryCache[memId]);
+    } else {
+        fetch('/api/memories/' + memId)
+            .then(function(r) { return r.json(); })
+            .then(function(mem) {
+                if (!mem.error) {
+                    if (typeof memoryCache !== 'undefined') memoryCache[memId] = mem;
+                    showPanel(mem);
+                }
+            });
+    }
 }
 
 function getMemoryHeadline(content) {
@@ -766,34 +810,6 @@ function getMemoryHeadline(content) {
 function getMemoryPreview(content) {
     var lines = content.split('\\n').filter(function(l) { return l.trim() && !l.match(/^#+/); });
     return lines.slice(0, 2).join(' ').substring(0, 150);
-}
-
-function showMemoryFromList(memId) {
-    memId = parseInt(memId, 10);
-    // Focus on the node in the graph (highlights connections)
-    if (typeof focusOnNode !== 'undefined') {
-        focusOnNode(memId);
-    }
-
-    // Switch to detail tab and show panel
-    switchTab('detail');
-
-    // Get memory data (from memoriesData if available, otherwise fetch)
-    if (typeof memoriesData !== 'undefined' && memoriesData[memId]) {
-        showPanel(memoriesData[memId]);
-    } else if (typeof memoryCache !== 'undefined' && memoryCache[memId]) {
-        showPanel(memoryCache[memId]);
-    } else {
-        // Fetch from API
-        fetch('/api/memories/' + memId)
-            .then(function(r) { return r.json(); })
-            .then(function(mem) {
-                if (!mem.error) {
-                    if (typeof memoryCache !== 'undefined') memoryCache[memId] = mem;
-                    showPanel(mem);
-                }
-            });
-    }
 }
 
 function escapeHtmlText(text) {
