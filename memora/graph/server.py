@@ -5,6 +5,7 @@ import os
 import socket
 import sys
 import threading
+from importlib.metadata import version as get_version
 from typing import TYPE_CHECKING
 
 from starlette.requests import Request
@@ -14,6 +15,12 @@ from sse_starlette.sse import EventSourceResponse
 from .data import export_graph_html, get_graph_data, get_memory_for_api
 from .templates import get_spa_html
 from ..storage import connect
+
+def _get_memora_version() -> str:
+    try:
+        return get_version("memora")
+    except Exception:
+        return ""
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -104,7 +111,7 @@ def start_graph_server(host: str, port: int) -> None:
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    GRAPH_HTML = get_spa_html()
+    GRAPH_HTML = get_spa_html(version=_get_memora_version())
 
     async def graph_handler(request: Request):
         """Serve the static graph SPA."""
@@ -128,6 +135,30 @@ def start_graph_server(host: str, port: int) -> None:
             if result.get("error") == "not_found":
                 return JSONResponse(result, status_code=404)
             return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memories_list(request: Request):
+        """API endpoint: Get all memories for timeline."""
+        try:
+            conn = connect()
+            rows = conn.execute(
+                """SELECT id, content, created_at, updated_at, tags, metadata
+                   FROM memories ORDER BY created_at DESC"""
+            ).fetchall()
+            conn.close()
+            memories = []
+            for row in rows:
+                import json
+                memories.append({
+                    "id": row["id"],
+                    "content": row["content"],
+                    "created": row["created_at"].split(" ")[0] if row["created_at"] else "",
+                    "updated": row["updated_at"].split(" ")[0] if row["updated_at"] else None,
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {}
+                })
+            return JSONResponse({"memories": memories})
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -201,6 +232,7 @@ def start_graph_server(host: str, port: int) -> None:
             Route("/graph", graph_handler),
             Route("/api/graph", api_graph),
             Route("/api/events", graph_events),
+            Route("/api/memories", api_memories_list),
             Route("/api/memories/{id:int}", api_memory),
             Route("/r2/{path:path}", r2_image_proxy),
         ]

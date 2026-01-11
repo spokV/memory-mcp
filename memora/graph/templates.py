@@ -56,6 +56,21 @@ div.vis-tooltip {
 #resize-handle:hover, #resize-handle.dragging { background: #58a6ff; }
 #resize-handle.active { display: block; }
 
+/* Panel tabs */
+#panel-tabs { display: flex; gap: 4px; background: #0d1117; padding: 6px; border-radius: 8px; margin-bottom: 16px; }
+#panel-tabs .tab { padding: 8px 20px; cursor: pointer; color: #8b949e; border-radius: 6px; font-size: 13px; font-weight: 500; transition: all 0.15s ease; }
+#panel-tabs .tab.active { color: #fff; background: linear-gradient(135deg, #238636 0%, #2ea043 100%); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+#panel-tabs .tab:not(.active):hover { color: #c9d1d9; background: #21262d; }
+#tab-detail, #tab-timeline { display: none; }
+#tab-detail.active, #tab-timeline.active { display: block; }
+#timeline-list { max-height: calc(100vh - 120px); overflow-y: auto; }
+#timeline-list .memory-item { padding: 10px; border-bottom: 1px solid #30363d; cursor: pointer; }
+#timeline-list .memory-item:hover { background: #21262d; }
+#timeline-list .memory-item.selected { background: #30363d; }
+#timeline-list .memory-id { color: #58a6ff; font-weight: 500; font-size: 12px; }
+#timeline-list .memory-headline { color: #c9d1d9; font-size: 13px; margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#timeline-list .memory-preview { color: #8b949e; font-size: 11px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
 /* Timeline slider */
 #timeline-container {
     position: absolute;
@@ -178,6 +193,7 @@ div.vis-tooltip {
 .subsection-item.active { background: rgba(88,166,255,0.3); color: #c9d1d9; }
 .subsection-item.selected { color: #ffffff; }
 #help { position: absolute; bottom: 10px; left: 10px; background: rgba(22,27,34,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #8b949e; }
+#version { position: absolute; top: 10px; right: 470px; background: rgba(22,27,34,0.8); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #6e7681; z-index: 50; }
 #node-tooltip { position: absolute; display: none; background: rgba(22,27,34,0.95); border: 1px solid #30363d; padding: 8px 12px; border-radius: 6px; pointer-events: none; z-index: 1000; max-width: 300px; }
 #node-tooltip .tooltip-id { color: #58a6ff; font-size: 12px; font-weight: bold; }
 #node-tooltip .tooltip-desc { color: #8b949e; font-size: 10px; margin-top: 4px; }
@@ -687,6 +703,104 @@ function hideNodeTooltip() {
 # JavaScript for panel display
 PANEL_JS = """
 var currentPanelMemoryId = null;
+var currentTab = 'detail';
+
+function switchTab(tabName) {
+    currentTab = tabName;
+    document.querySelectorAll('#panel-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelector('#panel-tabs .tab[onclick*="' + tabName + '"]').classList.add('active');
+    document.getElementById('tab-detail').classList.toggle('active', tabName === 'detail');
+    document.getElementById('tab-timeline').classList.toggle('active', tabName === 'timeline');
+    if (tabName === 'timeline') {
+        populateTimelineList();
+    }
+}
+
+function populateTimelineList() {
+    // Check if memoriesData exists (static template) or fetch from API (SPA)
+    if (typeof memoriesData !== 'undefined') {
+        renderTimelineList(Object.values(memoriesData));
+    } else {
+        // SPA mode - fetch from API
+        document.getElementById('timeline-list').innerHTML = '<div style="padding:20px;color:#8b949e;">Loading...</div>';
+        fetch('/api/memories')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.memories) {
+                    renderTimelineList(data.memories);
+                }
+            })
+            .catch(function(e) {
+                document.getElementById('timeline-list').innerHTML = '<div style="padding:20px;color:#f85149;">Error loading memories</div>';
+            });
+    }
+}
+
+function renderTimelineList(memories) {
+    memories.sort(function(a, b) {
+        return new Date(b.created) - new Date(a.created);
+    });
+    var html = memories.map(function(mem) {
+        var headline = getMemoryHeadline(mem.content);
+        var preview = getMemoryPreview(mem.content);
+        var selectedClass = (currentPanelMemoryId === mem.id) ? ' selected' : '';
+        return '<div class="memory-item' + selectedClass + '" data-id="' + mem.id + '" onclick="showMemoryFromList(' + mem.id + ')">' +
+            '<div class="memory-id">#' + mem.id + ' - ' + mem.created + '</div>' +
+            '<div class="memory-headline">' + escapeHtmlText(headline) + '</div>' +
+            '<div class="memory-preview">' + escapeHtmlText(preview) + '</div>' +
+        '</div>';
+    }).join('');
+    document.getElementById('timeline-list').innerHTML = html || '<div style="padding:20px;color:#8b949e;">No memories</div>';
+
+    // Scroll selected item into view
+    var selected = document.querySelector('#timeline-list .memory-item.selected');
+    if (selected) selected.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function getMemoryHeadline(content) {
+    var lines = content.split('\\n').filter(function(l) { return l.trim(); });
+    var first = lines[0] || '';
+    return first.replace(/^#+\\s*/, '').substring(0, 80);
+}
+
+function getMemoryPreview(content) {
+    var lines = content.split('\\n').filter(function(l) { return l.trim() && !l.match(/^#+/); });
+    return lines.slice(0, 2).join(' ').substring(0, 150);
+}
+
+function showMemoryFromList(memId) {
+    memId = parseInt(memId, 10);
+    // Focus on the node in the graph (highlights connections)
+    if (typeof focusOnNode !== 'undefined') {
+        focusOnNode(memId);
+    }
+
+    // Switch to detail tab and show panel
+    switchTab('detail');
+
+    // Get memory data (from memoriesData if available, otherwise fetch)
+    if (typeof memoriesData !== 'undefined' && memoriesData[memId]) {
+        showPanel(memoriesData[memId]);
+    } else if (typeof memoryCache !== 'undefined' && memoryCache[memId]) {
+        showPanel(memoryCache[memId]);
+    } else {
+        // Fetch from API
+        fetch('/api/memories/' + memId)
+            .then(function(r) { return r.json(); })
+            .then(function(mem) {
+                if (!mem.error) {
+                    if (typeof memoryCache !== 'undefined') memoryCache[memId] = mem;
+                    showPanel(mem);
+                }
+            });
+    }
+}
+
+function escapeHtmlText(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 function closePanel() {
     document.getElementById('panel').classList.remove('active');
@@ -698,6 +812,16 @@ function closePanel() {
 
 function showPanel(mem) {
     currentPanelMemoryId = mem.id;
+
+    // Ensure detail tab is active when showing a specific memory
+    if (currentTab !== 'detail') {
+        document.querySelectorAll('#panel-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelector('#panel-tabs .tab[onclick*="detail"]').classList.add('active');
+        document.getElementById('tab-detail').classList.add('active');
+        document.getElementById('tab-timeline').classList.remove('active');
+        currentTab = 'detail';
+    }
+
     document.getElementById('panel-title').textContent = 'Memory #' + mem.id;
 
     // Show issue or TODO badges if applicable
@@ -800,6 +924,7 @@ def build_static_html(
     node_timestamps_json: str = "{}",
     min_date: str = "",
     max_date: str = "",
+    version: str = "",
 ) -> str:
     """Build complete static HTML for export."""
     css = get_full_css()
@@ -830,10 +955,19 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
     <div id="resize-handle"></div>
     <div id="panel">
         <span class="close" onclick="closePanel()">&times;</span>
-        <h2 id="panel-title">Memory #</h2>
-        <div class="meta" id="panel-meta"></div>
-        <div class="tags" id="panel-tags"></div>
-        <div class="content" id="panel-content"></div>
+        <div id="panel-tabs">
+            <span class="tab active" onclick="switchTab('detail')">Detail</span>
+            <span class="tab" onclick="switchTab('timeline')">Timeline</span>
+        </div>
+        <div id="tab-detail" class="active">
+            <h2 id="panel-title">Memory #</h2>
+            <div class="meta" id="panel-meta"></div>
+            <div class="tags" id="panel-tags"></div>
+            <div class="content" id="panel-content"></div>
+        </div>
+        <div id="tab-timeline">
+            <div id="timeline-list"></div>
+        </div>
     </div>
     <div id="legend"><b>Tags</b>{legend_html}{issues_legend_html}{todos_legend_html}{duplicates_legend_html}<div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b>{sections_html}</div>
@@ -850,6 +984,7 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
         </div>
     </div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Drag timeline to filter by date</div>
+    <div id="version">v{version}</div>
     <div id="node-tooltip"></div>
     <script>
         var memoriesData = {memories_json};
@@ -913,7 +1048,7 @@ Duplicates ({len(duplicate_ids)})</div></div>'''
 </html>'''
 
 
-def get_spa_html() -> str:
+def get_spa_html(version: str = "") -> str:
     """Get SPA HTML template for dynamic graph server."""
     css = get_spa_css()
     js = get_full_js()
@@ -933,10 +1068,19 @@ def get_spa_html() -> str:
     <div id="resize-handle"></div>
     <div id="panel">
         <span class="close" onclick="closePanel()">&times;</span>
-        <h2 id="panel-title">Memory #</h2>
-        <div class="meta" id="panel-meta"></div>
-        <div class="tags" id="panel-tags"></div>
-        <div class="content" id="panel-content"></div>
+        <div id="panel-tabs">
+            <span class="tab active" onclick="switchTab('detail')">Detail</span>
+            <span class="tab" onclick="switchTab('timeline')">Timeline</span>
+        </div>
+        <div id="tab-detail" class="active">
+            <h2 id="panel-title">Memory #</h2>
+            <div class="meta" id="panel-meta"></div>
+            <div class="tags" id="panel-tags"></div>
+            <div class="content" id="panel-content"></div>
+        </div>
+        <div id="tab-timeline">
+            <div id="timeline-list"></div>
+        </div>
     </div>
     <div id="legend"><b>Tags</b><span class="legend-toggle" onclick="toggleTags()">[+]</span><div id="legend-items"></div><div id="issues-legend-items"></div><div id="todos-legend-items"></div><div id="duplicates-legend-items"></div><div class="reset" onclick="resetFilter()">Show All</div></div>
     <div id="sections"><b>Sections</b><div id="section-items"></div></div>
@@ -954,6 +1098,7 @@ def get_spa_html() -> str:
     </div>
     <div id="search-box"><input type="text" id="search" placeholder="Search memories..." oninput="searchMemories(this.value)"></div>
     <div id="help">Click tag/section to filter | Click node to view | Scroll to zoom | Type to search (or #id) | Drag timeline</div>
+    <div id="version">v{version}</div>
     <div id="node-tooltip"></div>
     <script>
         var graphData = null;

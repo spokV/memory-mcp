@@ -3,7 +3,15 @@
 import json
 import os
 from datetime import datetime, timedelta
+from importlib.metadata import version as get_version
 from typing import Any, Dict, List, Optional
+
+
+def _get_memora_version() -> str:
+    try:
+        return get_version("memora")
+    except Exception:
+        return ""
 
 # Stale threshold for closed issues/TODOs (in days)
 # Closed items older than this will appear gray and smaller
@@ -538,6 +546,7 @@ def export_graph_html(
             node_timestamps_json=json.dumps(node_timestamps),
             min_date=min_date,
             max_date=max_date,
+            version=_get_memora_version(),
         )
 
         result = {
